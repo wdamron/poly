@@ -1,43 +1,54 @@
+// The MIT License (MIT)
+//
+// Copyright (c) 2019 West Damron
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 package poly
 
 import (
-	"github.com/benbjohnson/immutable"
 	"github.com/wdamron/poly/types"
 )
 
+// TypeEnv contains mappings from identifiers to declared types.
 type TypeEnv struct {
-	m *immutable.Map
+	env    map[string]types.Type // declared types
+	nextId int                   // next unused type-variable id
 }
 
-func NewTypeEnv() TypeEnv { return TypeEnv{m: emptyMap} }
+// Create a type environment.
+func NewTypeEnv() *TypeEnv { return &TypeEnv{env: make(map[string]types.Type)} }
 
-func (env TypeEnv) Range(f func(string, types.Type) bool) {
-	if env.m == nil {
-		return
-	}
-	iter := env.m.Iterator()
-	for !iter.Done() {
-		k, v := iter.Next()
-		if !f(k.(string), v.(types.Type)) {
-			return
-		}
-	}
+// Create a fresh generic type-variable.
+func (e *TypeEnv) NewGenericVar() *types.Var { return types.NewGenericVar(e.freshId()) }
+
+// Declare a type for an identifier within the type environment.
+func (e *TypeEnv) Add(name string, t types.Type) { e.env[name] = generalize(-1, t) }
+
+// Remove a declared type for an identifier from the type environment.
+func (e *TypeEnv) Remove(name string) { delete(e.env, name) }
+
+// Get the map of declared types for the environment.
+func (e *TypeEnv) Map() map[string]types.Type { return e.env }
+
+func (e *TypeEnv) freshId() int {
+	id := e.nextId
+	e.nextId++
+	return id
 }
-
-func (env TypeEnv) Builder() TypeEnvBuilder {
-	m := env.m
-	if m == nil {
-		m = emptyMap
-	}
-	return TypeEnvBuilder{mb: immutable.NewMapBuilder(m)}
-}
-
-type TypeEnvBuilder struct {
-	mb *immutable.MapBuilder
-}
-
-func NewTypeEnvBuilder() TypeEnvBuilder { return TypeEnvBuilder{mb: immutable.NewMapBuilder(emptyMap)} }
-
-func (b TypeEnvBuilder) Set(name string, t types.Type) { b.mb.Set(name, t) }
-func (b TypeEnvBuilder) Delete(name string)            { b.mb.Delete(name) }
-func (b TypeEnvBuilder) Build() TypeEnv                { return TypeEnv{m: b.mb.Map()} }

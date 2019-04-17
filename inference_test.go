@@ -1,3 +1,25 @@
+// The MIT License (MIT)
+//
+// Copyright (c) 2019 West Damron
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 package poly
 
 import (
@@ -9,16 +31,18 @@ import (
 
 func TestRecursiveLet(t *testing.T) {
 	inf := NewInference()
-	env := NewTypeEnvBuilder()
-	env.Set("add", &types.Arrow{
+	env := NewTypeEnv()
+
+	env.Add("add", &types.Arrow{
 		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
 		Return: &types.Const{"int"},
 	})
-	env.Set("if", &types.Arrow{
-		Args:   []types.Type{&types.Const{"bool"}, &types.Const{"int"}, &types.Const{"int"}},
-		Return: &types.Const{"int"},
+	A := env.NewGenericVar()
+	env.Add("if", &types.Arrow{
+		Args:   []types.Type{&types.Const{"bool"}, A, A},
+		Return: A,
 	})
-	env.Set("newbool", &types.Arrow{Return: &types.Const{"bool"}})
+	env.Add("newbool", &types.Arrow{Return: &types.Const{"bool"}})
 
 	expr := &ast.Func{
 		ArgNames: []string{"x"},
@@ -53,98 +77,20 @@ func TestRecursiveLet(t *testing.T) {
 	}
 	t.Logf("expr: %s", exprString)
 
-	ty, err := inf.ExprType(env.Build(), expr)
+	// Infer twice to ensure state is properly reset between calls:
+
+	envCount := len(env.Map())
+
+	ty, err := inf.ExprType(env, expr)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	typeString := types.TypeString(ty)
-	if typeString != "int -> int" {
-		t.Fatalf("type: %s", typeString)
-	}
-	t.Logf("type: %s", typeString)
-}
-
-func TestMutuallyRecursiveLet(t *testing.T) {
-	inf := NewInference()
-	env := NewTypeEnvBuilder()
-	env.Set("add", &types.Arrow{
-		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
-		Return: &types.Const{"int"},
-	})
-	env.Set("if", &types.Arrow{
-		Args:   []types.Type{&types.Const{"bool"}, &types.Const{"int"}, &types.Const{"int"}},
-		Return: &types.Const{"int"},
-	})
-	env.Set("newbool", &types.Arrow{Return: &types.Const{"bool"}})
-
-	expr := &ast.Func{
-		ArgNames: []string{"x"},
-		Body: &ast.LetMulti{
-			Vars: []ast.LabelValue{
-				{
-					Label: "f",
-					Value: &ast.Func{
-						ArgNames: []string{"x"},
-						Body: &ast.Call{
-							Func: &ast.Var{"if"},
-							Args: []ast.Expr{
-								&ast.Call{Func: &ast.Var{"newbool"}},
-								&ast.Var{"x"},
-								&ast.Call{
-									Func: &ast.Var{"g"},
-									Args: []ast.Expr{&ast.Call{
-										Func: &ast.Var{"add"},
-										Args: []ast.Expr{&ast.Var{"x"}, &ast.Var{"x"}},
-									}},
-								}},
-						},
-					},
-				},
-				{
-					Label: "g",
-					Value: &ast.Func{
-						ArgNames: []string{"x"},
-						Body: &ast.Call{
-							Func: &ast.Var{"if"},
-							Args: []ast.Expr{
-								&ast.Call{Func: &ast.Var{"newbool"}},
-								&ast.Var{"x"},
-								&ast.Call{
-									Func: &ast.Var{"f"},
-									Args: []ast.Expr{&ast.Call{
-										Func: &ast.Var{"add"},
-										Args: []ast.Expr{&ast.Var{"x"}, &ast.Var{"x"}},
-									}},
-								}},
-						},
-					},
-				},
-				{
-					Label: "h",
-					Value: &ast.Func{
-						ArgNames: []string{"x"},
-						Body: &ast.Call{
-							Func: &ast.Var{"f"},
-							Args: []ast.Expr{&ast.Var{"x"}},
-						},
-					},
-				},
-			},
-			Body: &ast.Call{
-				Func: &ast.Var{"h"},
-				Args: []ast.Expr{&ast.Var{"x"}},
-			},
-		},
+	if len(env.Map()) != envCount {
+		t.Fatalf("expected unmodified type environment after inference")
 	}
 
-	exprString := ast.ExprString(expr)
-	if exprString != "fun x -> let f = fun x -> if(newbool(), x, g(add(x, x))) and g = fun x -> if(newbool(), x, f(add(x, x))) and h = fun x -> f(x) in h(x)" {
-		t.Fatalf("expr: %s", exprString)
-	}
-	t.Logf("expr: %s", exprString)
-
-	ty, err := inf.ExprType(env.Build(), expr)
+	ty, err = inf.ExprType(env, expr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -158,13 +104,13 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 
 func TestVariantMatch(t *testing.T) {
 	inf := NewInference()
-	env := NewTypeEnvBuilder()
-	env.Set("add", &types.Arrow{
+	env := NewTypeEnv()
+	env.Add("add", &types.Arrow{
 		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
 		Return: &types.Const{"int"},
 	})
-	env.Set("newint", &types.Arrow{Return: &types.Const{"int"}})
-	env.Set("newbool", &types.Arrow{Return: &types.Const{"bool"}})
+	env.Add("newint", &types.Arrow{Return: &types.Const{"int"}})
+	env.Add("newbool", &types.Arrow{Return: &types.Const{"bool"}})
 
 	fnExpr := &ast.Func{
 		ArgNames: []string{"x", "y"},
@@ -190,7 +136,7 @@ func TestVariantMatch(t *testing.T) {
 	}
 	t.Logf("expr: %s", exprString)
 
-	ty, err := inf.ExprType(env.Build(), fnExpr)
+	ty, err := inf.ExprType(env, fnExpr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,13 +166,152 @@ func TestVariantMatch(t *testing.T) {
 	}
 	t.Logf("expr: %s", exprString)
 
-	ty, err = inf.ExprType(env.Build(), callExpr)
+	ty, err = inf.ExprType(env, callExpr)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	typeString = types.TypeString(ty)
 	if typeString != "int" {
+		t.Fatalf("type: %s", typeString)
+	}
+	t.Logf("type: %s", typeString)
+}
+
+func TestMutuallyRecursiveLet(t *testing.T) {
+	inf := NewInference()
+	env := NewTypeEnv()
+	env.Add("add", &types.Arrow{
+		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
+		Return: &types.Const{"int"},
+	})
+	A := env.NewGenericVar()
+	env.Add("if", &types.Arrow{
+		Args:   []types.Type{&types.Const{"bool"}, A, A},
+		Return: A,
+	})
+	env.Add("newbool", &types.Arrow{Return: &types.Const{"bool"}})
+
+	newbool := &ast.Call{Func: &ast.Var{"newbool"}}
+	f := &ast.Var{"f"}
+	g := &ast.Var{"g"}
+	h := &ast.Var{"h"}
+	id := &ast.Var{"id"}
+	x := &ast.Var{"x"}
+
+	expr := &ast.LetGroup{
+		Vars: []ast.LetBinding{
+			{
+				Var: "id",
+				Value: &ast.Func{
+					ArgNames: []string{"x"},
+					Body:     x,
+				},
+			},
+			{
+				Var: "f",
+				Value: &ast.Func{
+					ArgNames: []string{"x"},
+					Body: &ast.Call{
+						Func: &ast.Var{"if"},
+						Args: []ast.Expr{
+							&ast.Call{
+								Func: id,
+								Args: []ast.Expr{newbool},
+							},
+							&ast.Call{
+								Func: id,
+								Args: []ast.Expr{x},
+							},
+							&ast.Call{
+								Func: g,
+								Args: []ast.Expr{&ast.Call{
+									Func: &ast.Var{"add"},
+									Args: []ast.Expr{x, x},
+								}},
+							}},
+					},
+				},
+			},
+			{
+				Var: "g",
+				Value: &ast.Func{
+					ArgNames: []string{"x"},
+					Body: &ast.Call{
+						Func: &ast.Var{"if"},
+						Args: []ast.Expr{
+							newbool,
+							x,
+							&ast.Call{
+								Func: id,
+								Args: []ast.Expr{&ast.Call{
+									Func: f,
+									Args: []ast.Expr{x},
+								}},
+							},
+						},
+					},
+				},
+			},
+		},
+		Body: &ast.Let{
+			Var: "h",
+			Value: &ast.Func{
+				ArgNames: []string{"x"},
+				Body: &ast.Call{
+					Func: id,
+					Args: []ast.Expr{&ast.Call{
+						Func: f,
+						Args: []ast.Expr{x},
+					}},
+				},
+			},
+			Body: &ast.RecordExtend{
+				Labels: []ast.LabelValue{
+					{"f", f},
+					{"g", g},
+					{"h", h},
+					{"id", id},
+				},
+			},
+		},
+	}
+
+	exprString := ast.ExprString(expr)
+
+	expect := "" +
+		"let id = fun x -> x" +
+		" and f = fun x -> if(id(newbool()), id(x), g(add(x, x)))" +
+		" and g = fun x -> if(newbool(), x, id(f(x)))" +
+		" in" +
+		" let h = fun x -> id(f(x))" +
+		" in {f = f, g = g, h = h, id = id}"
+
+	if exprString != expect {
+		t.Fatalf("expr: %s", exprString)
+	}
+	t.Logf("expr: %s", exprString)
+
+	// Infer twice to ensure state is properly reset between calls:
+
+	envCount := len(env.Map())
+
+	ty, err := inf.ExprType(env, expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(env.Map()) != envCount {
+		t.Fatalf("expected unmodified type environment after inference")
+	}
+
+	ty, err = inf.ExprType(env, expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	typeString := types.TypeString(ty)
+	if typeString != "forall[a] {f : int -> int, g : int -> int, h : int -> int, id : a -> a}" {
 		t.Fatalf("type: %s", typeString)
 	}
 	t.Logf("type: %s", typeString)

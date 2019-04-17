@@ -1,3 +1,25 @@
+// The MIT License (MIT)
+//
+// Copyright (c) 2019 West Damron
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 package types
 
 import (
@@ -6,6 +28,7 @@ import (
 	"strings"
 )
 
+// TypeString returns a string representation of a Type.
 func TypeString(t Type) string {
 	p := typePrinter{}
 	typeString(&p, false, t)
@@ -46,33 +69,33 @@ func (p *typePrinter) nextName() string {
 }
 
 func typeString(p *typePrinter, simple bool, t Type) {
-	switch tt := t.(type) {
+	switch t := t.(type) {
 	case *Const:
-		p.sb.WriteString(tt.Name)
+		p.sb.WriteString(t.Name)
 
 	case *Var:
-		switch tv := tt.Instance.(type) {
-		case GenericVar:
+		switch {
+		case t.IsGenericVar():
 			if len(p.ids) == 0 {
 				p.ids = make(map[int]string)
-			} else if name, ok := p.ids[tv.Id]; ok {
+			} else if name, ok := p.ids[t.Id()]; ok {
 				p.sb.WriteString(name)
 				return
 			}
 			name := p.nextName()
-			p.ids[tv.Id] = name
+			p.ids[t.Id()] = name
 			p.sb.WriteString(name)
-		case UnboundVar:
+		case t.IsUnboundVar():
 			p.sb.WriteByte('_')
-			p.sb.WriteString(strconv.Itoa(tv.Id))
-		case LinkVar:
-			typeString(p, simple, tv.Type)
+			p.sb.WriteString(strconv.Itoa(t.Id()))
+		case t.IsLinkVar():
+			typeString(p, simple, t.Link())
 		}
 
 	case *App:
-		typeString(p, true, tt.Func)
+		typeString(p, true, t.Func)
 		p.sb.WriteByte('[')
-		for i, arg := range tt.Args {
+		for i, arg := range t.Args {
 			if i > 0 {
 				p.sb.WriteString(", ")
 			}
@@ -84,20 +107,20 @@ func typeString(p *typePrinter, simple bool, t Type) {
 		if simple {
 			p.sb.WriteByte('(')
 		}
-		if len(tt.Args) == 1 {
-			typeString(p, true, tt.Args[0])
+		if len(t.Args) == 1 {
+			typeString(p, true, t.Args[0])
 			p.sb.WriteString(" -> ")
-			typeString(p, false, tt.Return)
+			typeString(p, false, t.Return)
 		} else {
 			p.sb.WriteByte('(')
-			for i, arg := range tt.Args {
+			for i, arg := range t.Args {
 				if i > 0 {
 					p.sb.WriteString(", ")
 				}
 				typeString(p, false, arg)
 			}
 			p.sb.WriteString(") -> ")
-			typeString(p, false, tt.Return)
+			typeString(p, false, t.Return)
 		}
 		if simple {
 			p.sb.WriteByte(')')
@@ -105,18 +128,18 @@ func typeString(p *typePrinter, simple bool, t Type) {
 
 	case *Record:
 		p.sb.WriteByte('{')
-		typeString(p, false, tt.Row)
+		typeString(p, false, t.Row)
 		p.sb.WriteByte('}')
 
 	case *Variant:
 		p.sb.WriteByte('[')
-		typeString(p, false, tt.Row)
+		typeString(p, false, t.Row)
 		p.sb.WriteByte(']')
 
 	case RowEmpty: // nothing to print
 
 	case *RowExtend:
-		labels, row, err := MatchRowType(tt)
+		labels, row, err := FlattenRowType(t)
 		if err != nil {
 			p.sb.WriteString("<INVALID-ROW>")
 			break

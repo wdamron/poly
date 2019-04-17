@@ -1,3 +1,25 @@
+// The MIT License (MIT)
+//
+// Copyright (c) 2019 West Damron
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
 package types
 
 import (
@@ -8,18 +30,22 @@ var emptyMap = immutable.NewSortedMap(nil)
 
 var EmptyTypeMap = TypeMap{emptyMap}
 
+// TypeMap contains immutable mappings from labels to immutable lists of types.
 type TypeMap struct {
 	m *immutable.SortedMap
 }
 
 func NewTypeMap() TypeMap { return TypeMap{emptyMap} }
 
+// Create a TypeMap with a single entry.
 func SingletonTypeMap(label string, t Type) TypeMap {
 	return TypeMap{emptyMap.Set(label, emptyList.Append(t))}
 }
 
+// Get the number of entries in the map.
 func (m TypeMap) Len() int { return m.m.Len() }
 
+// Get the first entry in the map. Entries are sorted by label.
 func (m TypeMap) First() (string, TypeList) {
 	if m.Len() == 0 {
 		return "", EmptyTypeList
@@ -28,6 +54,7 @@ func (m TypeMap) First() (string, TypeList) {
 	return k.(string), TypeList{v.(*immutable.List)}
 }
 
+// Get the list of types for a label.
 func (m TypeMap) Get(label string) (TypeList, bool) {
 	l, ok := m.m.Get(label)
 	if !ok {
@@ -36,6 +63,7 @@ func (m TypeMap) Get(label string) (TypeList, bool) {
 	return TypeList{l: l.(*immutable.List)}, true
 }
 
+// Iterate over entries in the map.
 // If f returns false, iteration will be stopped.
 func (m TypeMap) Range(f func(string, TypeList) bool) {
 	iter := m.m.Iterator()
@@ -47,10 +75,12 @@ func (m TypeMap) Range(f func(string, TypeList) bool) {
 	}
 }
 
+// Get an iterator which may be used to read entries in the map, in sequential order.
 func (m TypeMap) Iterator() TypeMapIterator {
 	return TypeMapIterator{m.m.Iterator()}
 }
 
+// Convert the map to a builder for modification, without mutating the existing map.
 func (m TypeMap) Builder() TypeMapBuilder {
 	imm := m.m
 	if imm == nil {
@@ -59,6 +89,7 @@ func (m TypeMap) Builder() TypeMapBuilder {
 	return TypeMapBuilder{immutable.NewSortedMapBuilder(imm)}
 }
 
+// TypeMapBuilder enables in-place updates of a map before finalization.
 type TypeMapBuilder struct {
 	b *immutable.SortedMapBuilder
 }
@@ -67,11 +98,19 @@ func NewTypeMapBuilder() TypeMapBuilder {
 	return TypeMapBuilder{immutable.NewSortedMapBuilder(emptyMap)}
 }
 
-func (b TypeMapBuilder) Len() int                      { return b.b.Len() }
-func (b TypeMapBuilder) Set(label string, ts TypeList) { b.b.Set(label, ts.l) }
-func (b TypeMapBuilder) Delete(label string)           { b.b.Delete(label) }
-func (b TypeMapBuilder) Build() TypeMap                { return TypeMap{b.b.Map()} }
+// Get the number of entries in the builder.
+func (b TypeMapBuilder) Len() int { return b.b.Len() }
 
+// Set the type list for the given label in the builder.
+func (b TypeMapBuilder) Set(label string, ts TypeList) { b.b.Set(label, ts.l) }
+
+// Delete the given label and corresponding type list from the builder.
+func (b TypeMapBuilder) Delete(label string) { b.b.Delete(label) }
+
+// Finalize the builder into an immutable map.
+func (b TypeMapBuilder) Build() TypeMap { return TypeMap{b.b.Map()} }
+
+// Merge entries into the builder.
 func (a TypeMapBuilder) Merge(b TypeMap) {
 	b.Range(func(label string, bts TypeList) bool {
 		ts, ok := a.b.Get(label)
@@ -89,12 +128,15 @@ func (a TypeMapBuilder) Merge(b TypeMap) {
 	})
 }
 
+// TypeMapIterator reads entries in a map, in sequential order.
 type TypeMapIterator struct {
 	i *immutable.SortedMapIterator
 }
 
+// Done returns true if the iterator has reached the end a map.
 func (i TypeMapIterator) Done() bool { return i.i.Done() }
 
+// Next advances the iterator and returns the next entry from a map.
 func (i TypeMapIterator) Next() (string, TypeList) {
 	if i.Done() {
 		return "", EmptyTypeList
@@ -103,6 +145,7 @@ func (i TypeMapIterator) Next() (string, TypeList) {
 	return k.(string), TypeList{v.(*immutable.List)}
 }
 
+// Peek returns the next entry from a map without advancing the iterator.
 func (i TypeMapIterator) Peek() (string, TypeList) {
 	if i.Done() {
 		return "", EmptyTypeList
