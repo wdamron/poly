@@ -31,7 +31,7 @@ const (
 	LinkVarLevel    = -1 << 31
 )
 
-// Type is the base interface for all types.
+// Type is the base for all types.
 type Type interface {
 	TypeName() string
 	IsGeneric() bool

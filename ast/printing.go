@@ -102,7 +102,7 @@ func exprString(sb *strings.Builder, simple bool, e Expr) {
 			sb.WriteByte(')')
 		}
 
-	case RecordEmpty:
+	case *RecordEmpty:
 		sb.WriteString("{}")
 
 	case *RecordSelect:
@@ -133,7 +133,7 @@ func exprString(sb *strings.Builder, simple bool, e Expr) {
 			exprString(sb, false, label.Value)
 		}
 		switch e.Record.(type) {
-		case RecordEmpty:
+		case *RecordEmpty:
 		case nil:
 		default:
 			sb.WriteString(" | ")

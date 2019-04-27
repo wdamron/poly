@@ -260,7 +260,7 @@ func (a *analysis) analyzeExpr(expr ast.Expr) error {
 			return err
 		}
 
-	case ast.RecordEmpty:
+	case *ast.RecordEmpty:
 		// nothing to check
 
 	case *ast.Variant:

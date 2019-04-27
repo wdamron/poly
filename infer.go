@@ -174,7 +174,9 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			return nil, ti.err
 		}
 		ti.clearInstLookup()
-		return ti.instantiate(level, v.(types.Type)), nil
+		t := ti.instantiate(level, v.(types.Type))
+		e.SetType(t)
+		return t, nil
 
 	case *ast.Let:
 		if _, isFunc := e.Value.(*ast.Func); !isFunc {
@@ -213,7 +215,7 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 				ti.invalid, ti.err, ti.analysis.invalid = ti.analysis.invalid, err, nil
 				return nil, err
 			}
-			ti.analyzed, ti.rootExpr = true, nil
+			ti.analyzed = true
 		}
 		stashed := 0
 		// Grouped let-bindings are sorted into strongly-connected components, then type-checked in dependency order:
@@ -288,7 +290,9 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			delete(env, name)
 		}
 		ti.unstash(env, stashed)
-		return &types.Arrow{Args: args, Return: ret}, err
+		t := &types.Arrow{Args: args, Return: ret}
+		e.SetType(t)
+		return t, err
 
 	case *ast.Call:
 		ft, err := ti.infer(env, level, e.Func)
@@ -310,10 +314,13 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 				return nil, err
 			}
 		}
+		e.SetType(ret)
 		return ret, nil
 
-	case ast.RecordEmpty:
-		return &types.Record{Row: types.RowEmpty{}}, nil
+	case *ast.RecordEmpty:
+		rt := &types.Record{Row: types.RowEmpty{}}
+		e.SetType(rt)
+		return rt, nil
 
 	case *ast.RecordSelect:
 		rowType := ti.newVar(level)
@@ -328,6 +335,7 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
+		e.SetType(labelType)
 		return labelType, nil
 
 	case *ast.RecordRestrict:
@@ -343,7 +351,9 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		return &types.Record{Row: rowType}, nil
+		rt := &types.Record{Row: rowType}
+		e.SetType(rt)
+		return rt, nil
 
 	case *ast.RecordExtend:
 		mb := types.NewTypeMapBuilder()
@@ -355,11 +365,7 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			mb.Set(label.Label, types.SingletonTypeList(t))
 		}
 		rowType := ti.newVar(level)
-		record := e.Record
-		if record == nil {
-			record = ast.RecordEmpty{}
-		}
-		recordType, err := ti.infer(env, level, record)
+		recordType, err := ti.infer(env, level, e.Record)
 		if err != nil {
 			return nil, err
 		}
@@ -367,7 +373,9 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		return &types.Record{Row: &types.RowExtend{Row: rowType, Labels: mb.Build()}}, nil
+		rt := &types.Record{Row: &types.RowExtend{Row: rowType, Labels: mb.Build()}}
+		e.SetType(rt)
+		return rt, nil
 
 	case *ast.Variant:
 		rowType := ti.newVar(level)
@@ -381,7 +389,8 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			return nil, err
 		}
 		labels := types.SingletonTypeMap(e.Label, variantType)
-		return &types.Variant{Row: &types.RowExtend{Row: rowType, Labels: labels}}, nil
+		vt := &types.Variant{Row: &types.RowExtend{Row: rowType, Labels: labels}}
+		return vt, nil
 
 	case *ast.Match:
 		if e.Default == nil {
@@ -395,6 +404,7 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 				ti.invalid, ti.err = e, err
 				return nil, err
 			}
+			e.SetType(retType)
 			return retType, nil
 		}
 		defaultType := ti.newVar(level)
@@ -419,10 +429,17 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
+		e.SetType(retType)
 		return retType, nil
 	}
 
-	ti.invalid, ti.err = e, errors.New("Unhandled expression "+e.ExprName())
+	var exprName string
+	if e != nil {
+		exprName = "(" + e.ExprName() + ")"
+	} else {
+		exprName = "(nil)"
+	}
+	ti.invalid, ti.err = e, errors.New("Unhandled expression "+exprName)
 	return nil, ti.err
 }
 
@@ -464,6 +481,7 @@ func (ti *Inference) inferCases(env map[string]types.Type, level int, retType, r
 		variantType := &tvs[i]
 		stashed := ti.stash(env, c.Var)
 		env[c.Var] = variantType
+		c.SetVariantType(variantType)
 		t, err := ti.infer(env, level, c.Value)
 		delete(env, c.Var)
 		ti.unstash(env, stashed)

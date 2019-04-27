@@ -85,19 +85,28 @@ func (ti *Inference) ExprType(env *TypeEnv, expr ast.Expr) (types.Type, error) {
 		ti.Reset()
 	}
 	ti.nextId = env.nextId
-	ti.rootExpr = expr
-	t, err := ti.infer(env.Map(), 0, expr)
-	ti.needsReset, ti.rootExpr = true, nil
+	ti.rootExpr = ast.CopyExpr(expr)
+	t, err := ti.infer(env.Map(), 0, ti.rootExpr)
+	ti.needsReset = true
 	if err != nil {
 		return t, err
 	}
 	return generalize(-1, t), nil
 }
 
-// Return the error which caused inference to fail.
+// Infer the type of expr within env. The type-annotated AST for the expression will be returned with the type.
+func (ti *Inference) AnnotatedExprType(env *TypeEnv, expr ast.Expr) (types.Type, ast.Expr, error) {
+	t, err := ti.ExprType(env, expr)
+	return t, ti.rootExpr, err
+}
+
+// Get the type-annotated AST for the most-recently inferred expression.
+func (ti *Inference) AnnotatedExpr() ast.Expr { return ti.rootExpr }
+
+// Get the error which caused inference to fail.
 func (ti *Inference) Error() error { return ti.err }
 
-// Return the expression which caused inference to fail.
+// Get the expression which caused inference to fail.
 func (ti *Inference) InvalidExpr() ast.Expr { return ti.invalid }
 
 // Reset the state of the context. The context will be reset automatically between calls of ExprType.

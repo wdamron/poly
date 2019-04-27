@@ -51,22 +51,22 @@ func TestRecursiveLet(t *testing.T) {
 			Value: &ast.Func{
 				ArgNames: []string{"x"},
 				Body: &ast.Call{
-					Func: &ast.Var{"if"},
+					Func: &ast.Var{Name: "if"},
 					Args: []ast.Expr{
-						&ast.Call{Func: &ast.Var{"newbool"}},
-						&ast.Var{"x"},
+						&ast.Call{Func: &ast.Var{Name: "newbool"}},
+						&ast.Var{Name: "x"},
 						&ast.Call{
-							Func: &ast.Var{"f"},
+							Func: &ast.Var{Name: "f"},
 							Args: []ast.Expr{&ast.Call{
-								Func: &ast.Var{"add"},
-								Args: []ast.Expr{&ast.Var{"x"}, &ast.Var{"x"}},
+								Func: &ast.Var{Name: "add"},
+								Args: []ast.Expr{&ast.Var{Name: "x"}, &ast.Var{Name: "x"}},
 							}},
 						}},
 				},
 			},
 			Body: &ast.Call{
-				Func: &ast.Var{"f"},
-				Args: []ast.Expr{&ast.Var{"x"}},
+				Func: &ast.Var{Name: "f"},
+				Args: []ast.Expr{&ast.Var{Name: "x"}},
 			},
 		},
 	}
@@ -100,6 +100,10 @@ func TestRecursiveLet(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 	t.Logf("type: %s", typeString)
+
+	// ast.WalkExpr(inf.AnnotatedExpr(), func(e ast.Expr) {
+	// 	t.Logf("\n%s\n:: %s\n", ast.ExprString(e), types.TypeString(e.Type()))
+	// })
 }
 
 func TestVariantMatch(t *testing.T) {
@@ -115,17 +119,17 @@ func TestVariantMatch(t *testing.T) {
 	fnExpr := &ast.Func{
 		ArgNames: []string{"x", "y"},
 		Body: &ast.Match{
-			Value: &ast.Var{"x"},
+			Value: &ast.Var{Name: "x"},
 			Cases: []ast.MatchCase{
-				{"a", "i", &ast.Call{
-					Func: &ast.Var{"add"},
-					Args: []ast.Expr{&ast.Var{"i"}, &ast.Var{"i"}},
+				{Label: "a", Var: "i", Value: &ast.Call{
+					Func: &ast.Var{Name: "add"},
+					Args: []ast.Expr{&ast.Var{Name: "i"}, &ast.Var{Name: "i"}},
 				}},
-				{"b", "i", &ast.Call{
-					Func: &ast.Var{"add"},
-					Args: []ast.Expr{&ast.Var{"i"}, &ast.Var{"i"}},
+				{Label: "b", Var: "i", Value: &ast.Call{
+					Func: &ast.Var{Name: "add"},
+					Args: []ast.Expr{&ast.Var{Name: "i"}, &ast.Var{Name: "i"}},
 				}},
-				{"c", "_", &ast.Var{"y"}},
+				{Label: "c", Var: "_", Value: &ast.Var{Name: "y"}},
 			},
 		},
 	}
@@ -147,10 +151,14 @@ func TestVariantMatch(t *testing.T) {
 	}
 	t.Logf("type: %s", typeString)
 
+	// ast.WalkExpr(inf.AnnotatedExpr(), func(e ast.Expr) {
+	// 	t.Logf("\n%s\n:: %s\n", ast.ExprString(e), types.TypeString(e.Type()))
+	// })
+
 	// Call:
 
-	newint := &ast.Call{Func: &ast.Var{"newint"}}
-	newbool := &ast.Call{Func: &ast.Var{"newbool"}}
+	newint := &ast.Call{Func: &ast.Var{Name: "newint"}}
+	newbool := &ast.Call{Func: &ast.Var{Name: "newbool"}}
 
 	callExpr := &ast.Call{
 		Func: fnExpr,
@@ -176,6 +184,10 @@ func TestVariantMatch(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 	t.Logf("type: %s", typeString)
+
+	// ast.WalkExpr(inf.AnnotatedExpr(), func(e ast.Expr) {
+	// 	t.Logf("\n%s\n:: %s\n", ast.ExprString(e), types.TypeString(e.Type()))
+	// })
 }
 
 func TestMutuallyRecursiveLet(t *testing.T) {
@@ -192,12 +204,12 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 	})
 	env.Add("newbool", &types.Arrow{Return: &types.Const{"bool"}})
 
-	newbool := &ast.Call{Func: &ast.Var{"newbool"}}
-	f := &ast.Var{"f"}
-	g := &ast.Var{"g"}
-	h := &ast.Var{"h"}
-	id := &ast.Var{"id"}
-	x := &ast.Var{"x"}
+	newbool := &ast.Call{Func: &ast.Var{Name: "newbool"}}
+	f := &ast.Var{Name: "f"}
+	g := &ast.Var{Name: "g"}
+	h := &ast.Var{Name: "h"}
+	id := &ast.Var{Name: "id"}
+	x := &ast.Var{Name: "x"}
 
 	expr := &ast.LetGroup{
 		Vars: []ast.LetBinding{
@@ -213,7 +225,7 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 				Value: &ast.Func{
 					ArgNames: []string{"x"},
 					Body: &ast.Call{
-						Func: &ast.Var{"if"},
+						Func: &ast.Var{Name: "if"},
 						Args: []ast.Expr{
 							&ast.Call{
 								Func: id,
@@ -226,7 +238,7 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 							&ast.Call{
 								Func: g,
 								Args: []ast.Expr{&ast.Call{
-									Func: &ast.Var{"add"},
+									Func: &ast.Var{Name: "add"},
 									Args: []ast.Expr{x, x},
 								}},
 							}},
@@ -238,7 +250,7 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 				Value: &ast.Func{
 					ArgNames: []string{"x"},
 					Body: &ast.Call{
-						Func: &ast.Var{"if"},
+						Func: &ast.Var{Name: "if"},
 						Args: []ast.Expr{
 							newbool,
 							x,
@@ -315,4 +327,8 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 	t.Logf("type: %s", typeString)
+
+	// ast.WalkExpr(inf.AnnotatedExpr(), func(e ast.Expr) {
+	// 	t.Logf("\n%s\n:: %s\n", ast.ExprString(e), types.TypeString(e.Type()))
+	// })
 }
