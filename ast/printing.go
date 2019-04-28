@@ -53,15 +53,18 @@ func exprString(sb *strings.Builder, simple bool, e Expr) {
 		if simple {
 			sb.WriteByte('(')
 		}
-		sb.WriteString("fun ")
+		sb.WriteString("fn ")
 		if len(e.ArgNames) == 0 {
 			sb.WriteString("()")
-		}
-		for i, arg := range e.ArgNames {
-			if i > 0 {
-				sb.WriteByte(' ')
+		} else {
+			sb.WriteByte('(')
+			for i, arg := range e.ArgNames {
+				if i > 0 {
+					sb.WriteString(", ")
+				}
+				sb.WriteString(arg)
 			}
-			sb.WriteString(arg)
+			sb.WriteByte(')')
 		}
 		sb.WriteString(" -> ")
 		exprString(sb, false, e.Body)
@@ -74,9 +77,7 @@ func exprString(sb *strings.Builder, simple bool, e Expr) {
 			sb.WriteByte('(')
 		}
 		sb.WriteString("let ")
-		sb.WriteString(e.Var)
-		sb.WriteString(" = ")
-		exprString(sb, false, e.Value)
+		bindingString(sb, e.Var, e.Value)
 		sb.WriteString(" in ")
 		exprString(sb, false, e.Body)
 		if simple {
@@ -92,9 +93,7 @@ func exprString(sb *strings.Builder, simple bool, e Expr) {
 			if i > 0 {
 				sb.WriteString(" and ")
 			}
-			sb.WriteString(v.Var)
-			sb.WriteString(" = ")
-			exprString(sb, false, v.Value)
+			bindingString(sb, v.Var, v.Value)
 		}
 		sb.WriteString(" in ")
 		exprString(sb, false, e.Body)
@@ -128,9 +127,7 @@ func exprString(sb *strings.Builder, simple bool, e Expr) {
 			if i > 0 {
 				sb.WriteString(", ")
 			}
-			sb.WriteString(label.Label)
-			sb.WriteString(" = ")
-			exprString(sb, false, label.Value)
+			bindingString(sb, label.Label, label.Value)
 		}
 		switch e.Record.(type) {
 		case *RecordEmpty:
@@ -176,4 +173,32 @@ func exprString(sb *strings.Builder, simple bool, e Expr) {
 		}
 		sb.WriteString(" }")
 	}
+}
+
+func bindingString(sb *strings.Builder, label string, value Expr) {
+	fn, ok := value.(*Func)
+	if !ok {
+		sb.WriteString(label)
+		sb.WriteString(" = ")
+		exprString(sb, false, value)
+		return
+	}
+
+	sb.WriteString(label)
+	if len(fn.ArgNames) == 0 {
+		sb.WriteString("()")
+	} else {
+		sb.WriteByte('(')
+		for i, arg := range fn.ArgNames {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(arg)
+		}
+		sb.WriteByte(')')
+	}
+
+	sb.WriteString(" = ")
+	exprString(sb, false, fn.Body)
+
 }

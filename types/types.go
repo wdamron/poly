@@ -26,11 +26,6 @@ import (
 	"errors"
 )
 
-const (
-	GenericVarLevel = 1<<31 - 1
-	LinkVarLevel    = -1 << 31
-)
-
 // Type is the base for all types.
 type Type interface {
 	TypeName() string
@@ -44,7 +39,7 @@ func (t *Arrow) TypeName() string     { return "Arrow" }
 func (t *Record) TypeName() string    { return "Record" }
 func (t *Variant) TypeName() string   { return "Variant" }
 func (t *RowExtend) TypeName() string { return "RowExtend" }
-func (t RowEmpty) TypeName() string   { return "RowEmpty" }
+func (t *RowEmpty) TypeName() string  { return "RowEmpty" }
 
 func (t *Var) IsGeneric() bool {
 	r := RealType(t)
@@ -53,71 +48,13 @@ func (t *Var) IsGeneric() bool {
 	}
 	return r.IsGeneric()
 }
-
 func (t *Const) IsGeneric() bool     { return false }
 func (t *App) IsGeneric() bool       { return t.HasGenericVars }
 func (t *Arrow) IsGeneric() bool     { return t.HasGenericVars }
 func (t *Record) IsGeneric() bool    { return t.HasGenericVars }
 func (t *Variant) IsGeneric() bool   { return t.HasGenericVars }
 func (t *RowExtend) IsGeneric() bool { return t.HasGenericVars }
-func (t RowEmpty) IsGeneric() bool   { return false }
-
-// Type variable
-type Var struct {
-	link  Type
-	id    int32
-	level int32
-}
-
-// Instance of a type variable
-type VarType int
-
-const (
-	UnboundVar VarType = iota
-	LinkVar
-	GenericVar
-)
-
-func NewVar(id, level int) *Var {
-	return &Var{id: int32(id), level: int32(level)}
-}
-
-func NewGenericVar(id int) *Var {
-	return &Var{id: int32(id), level: GenericVarLevel}
-}
-
-func (tv *Var) VarType() VarType {
-	switch tv.level {
-	case LinkVarLevel:
-		return LinkVar
-	case GenericVarLevel:
-		return GenericVar
-	default:
-		return UnboundVar
-	}
-}
-
-func (tv *Var) Link() Type { return tv.link }
-func (tv *Var) Id() int    { return int(tv.id) }
-func (tv *Var) Level() int { return int(tv.level) }
-
-func (tv *Var) IsUnboundVar() bool { return tv.level != LinkVarLevel && tv.level != GenericVarLevel }
-func (tv *Var) IsLinkVar() bool    { return tv.level == LinkVarLevel }
-func (tv *Var) IsGenericVar() bool { return tv.level == GenericVarLevel }
-
-func (tv *Var) SetId(id int)   { tv.id = int32(id) }
-func (tv *Var) SetLink(t Type) { tv.link, tv.id, tv.level = t, -1, LinkVarLevel }
-func (tv *Var) SetGeneric()    { tv.link, tv.level = nil, GenericVarLevel }
-func (tv *Var) AdjustLevel(level int) {
-	if level == GenericVarLevel {
-		tv.SetGeneric()
-		return
-	}
-	tv.link, tv.level = nil, int32(level)
-}
-func (tv *Var) Update(id, level int, link Type) {
-	tv.link, tv.id, tv.level = link, int32(id), int32(level)
-}
+func (t *RowEmpty) IsGeneric() bool  { return false }
 
 // Type constant: `int` or `bool`
 type Const struct {
@@ -156,6 +93,8 @@ type RowExtend struct {
 	Labels         TypeMap
 	HasGenericVars bool
 }
+
+var RowEmptyPointer = (*RowEmpty)(nil)
 
 // Empty row: `<>`
 type RowEmpty struct{}
@@ -199,7 +138,7 @@ func flattenRowType(labels TypeMapBuilder, t Type) (Type, error) {
 			return flattenRowType(labels, t.Link())
 		}
 		return t, nil
-	case RowEmpty:
+	case *RowEmpty:
 		return t, nil
 	default:
 		return t, errors.New("Not a row type")

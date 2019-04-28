@@ -28,7 +28,7 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-func (ti *Inference) occursAdjustLevels(id, level int, t types.Type) error {
+func (ti *InferenceContext) occursAdjustLevels(id, level int, t types.Type) error {
 	switch t := t.(type) {
 	case *types.Var:
 		switch {
@@ -41,7 +41,7 @@ func (ti *Inference) occursAdjustLevels(id, level int, t types.Type) error {
 				return errors.New("Invalid recursive types")
 			}
 			if t.Level() > level {
-				t.AdjustLevel(level)
+				t.SetLevel(level)
 			}
 		}
 		return nil
@@ -90,7 +90,7 @@ func (ti *Inference) occursAdjustLevels(id, level int, t types.Type) error {
 	}
 }
 
-func (ti *Inference) unify(a, b types.Type) error {
+func (ti *InferenceContext) unify(a, b types.Type) error {
 	if a == b {
 		return nil
 	}
@@ -108,7 +108,9 @@ func (ti *Inference) unify(a, b types.Type) error {
 			if err := ti.occursAdjustLevels(a.Id(), a.Level(), b); err != nil {
 				return err
 			}
-			a.SetLink(b)
+			if err := a.SetLink(b); err != nil {
+				return err
+			}
 			return nil
 		default:
 			return errors.New("Generic type-variable was not generalized or instantiated before unification")
@@ -179,16 +181,15 @@ func (ti *Inference) unify(a, b types.Type) error {
 			return ti.unifyRows(a, b)
 		}
 
-	case types.RowEmpty:
-		if _, ok := b.(types.RowEmpty); ok {
+	case *types.RowEmpty:
+		if _, ok := b.(*types.RowEmpty); ok {
 			return nil
 		}
 	}
-
 	return errors.New("Failed to unify " + a.TypeName() + " with " + b.TypeName())
 }
 
-func (ti *Inference) unifyLists(a, b types.TypeList) (xa, xb types.TypeList, err error) {
+func (ti *InferenceContext) unifyLists(a, b types.TypeList) (xa, xb types.TypeList, err error) {
 	i := 0
 	n := a.Len()
 	if b.Len() < n {
@@ -204,7 +205,7 @@ func (ti *Inference) unifyLists(a, b types.TypeList) (xa, xb types.TypeList, err
 	return a.Slice(i, a.Len()), b.Slice(i, b.Len()), nil
 }
 
-func (ti *Inference) unifyRows(a, b types.Type) error {
+func (ti *InferenceContext) unifyRows(a, b types.Type) error {
 	ma, ra, err := types.FlattenRowType(a)
 	if err != nil {
 		return err
@@ -269,14 +270,14 @@ UnifyLabels:
 		return ti.unify(ra, &types.RowExtend{Row: rb, Labels: xa.Build()})
 	default:
 		switch ra := ra.(type) {
-		case types.RowEmpty:
+		case *types.RowEmpty:
 			// will result in an error:
-			return ti.unify(ra, &types.RowExtend{Row: ti.newVar(0), Labels: xa.Build()})
+			return ti.unify(ra, &types.RowExtend{Row: ti.varTracker.New(0), Labels: xa.Build()})
 		case *types.Var:
 			if !ra.IsUnboundVar() {
-				return errors.New("Invalid state while unifying type variables for rows")
+				return errors.New("Invalid state while unifying type-variables for rows")
 			}
-			tv := ti.newVar(ra.Level())
+			tv := ti.varTracker.New(ra.Level())
 			if err := ti.unify(rb, &types.RowExtend{Row: tv, Labels: xb.Build()}); err != nil {
 				return err
 			}

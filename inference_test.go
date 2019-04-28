@@ -30,8 +30,8 @@ import (
 )
 
 func TestRecursiveLet(t *testing.T) {
-	inf := NewInference()
-	env := NewTypeEnv()
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
 
 	env.Add("add", &types.Arrow{
 		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
@@ -72,25 +72,25 @@ func TestRecursiveLet(t *testing.T) {
 	}
 
 	exprString := ast.ExprString(expr)
-	if exprString != "fun x -> let f = fun x -> if(newbool(), x, f(add(x, x))) in f(x)" {
+	if exprString != "fn (x) -> let f(x) = if(newbool(), x, f(add(x, x))) in f(x)" {
 		t.Fatalf("expr: %s", exprString)
 	}
 	t.Logf("expr: %s", exprString)
 
 	// Infer twice to ensure state is properly reset between calls:
 
-	envCount := len(env.Map())
+	envCount := len(env.Types)
 
-	ty, err := inf.ExprType(env, expr)
+	ty, err := ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(env.Map()) != envCount {
+	if len(env.Types) != envCount {
 		t.Fatalf("expected unmodified type environment after inference")
 	}
 
-	ty, err = inf.ExprType(env, expr)
+	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,15 +100,12 @@ func TestRecursiveLet(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 	t.Logf("type: %s", typeString)
-
-	// ast.WalkExpr(inf.AnnotatedExpr(), func(e ast.Expr) {
-	// 	t.Logf("\n%s\n:: %s\n", ast.ExprString(e), types.TypeString(e.Type()))
-	// })
 }
 
 func TestVariantMatch(t *testing.T) {
-	inf := NewInference()
-	env := NewTypeEnv()
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
 	env.Add("add", &types.Arrow{
 		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
 		Return: &types.Const{"int"},
@@ -135,25 +132,21 @@ func TestVariantMatch(t *testing.T) {
 	}
 
 	exprString := ast.ExprString(fnExpr)
-	if exprString != "fun x y -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y }" {
+	if exprString != "fn (x, y) -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y }" {
 		t.Fatalf("expr: %s", exprString)
 	}
 	t.Logf("expr: %s", exprString)
 
-	ty, err := inf.ExprType(env, fnExpr)
+	ty, err := ctx.Infer(fnExpr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	typeString := types.TypeString(ty)
-	if typeString != "forall[a] ([a : int, b : int, c : a], int) -> int" {
+	if typeString != "([a : int, b : int, c : 'a], int) -> int" {
 		t.Fatalf("type: %s", typeString)
 	}
 	t.Logf("type: %s", typeString)
-
-	// ast.WalkExpr(inf.AnnotatedExpr(), func(e ast.Expr) {
-	// 	t.Logf("\n%s\n:: %s\n", ast.ExprString(e), types.TypeString(e.Type()))
-	// })
 
 	// Call:
 
@@ -169,12 +162,12 @@ func TestVariantMatch(t *testing.T) {
 	}
 
 	exprString = ast.ExprString(callExpr)
-	if exprString != "(fun x y -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y })(:c newbool(), newint())" {
+	if exprString != "(fn (x, y) -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y })(:c newbool(), newint())" {
 		t.Fatalf("expr: %s", exprString)
 	}
 	t.Logf("expr: %s", exprString)
 
-	ty, err = inf.ExprType(env, callExpr)
+	ty, err = ctx.Infer(callExpr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,15 +177,61 @@ func TestVariantMatch(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 	t.Logf("type: %s", typeString)
+}
 
-	// ast.WalkExpr(inf.AnnotatedExpr(), func(e ast.Expr) {
-	// 	t.Logf("\n%s\n:: %s\n", ast.ExprString(e), types.TypeString(e.Type()))
-	// })
+func TestKindConstraints(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	intType := &types.Const{"int"}
+	floatType := &types.Const{"float"}
+	boolType := &types.Const{"bool"}
+
+	Num := env.NewQualifiedVar(env.NewUnion("Num", intType, floatType))
+
+	env.Add("newbool", &types.Arrow{Return: boolType})
+	env.Add("+", &types.Arrow{
+		Args:   []types.Type{Num, Num},
+		Return: Num,
+	})
+
+	newbool := &ast.Call{Func: &ast.Var{Name: "newbool"}}
+
+	var expr ast.Expr = &ast.Func{
+		ArgNames: []string{"x", "y"},
+		Body: &ast.Call{
+			Func: &ast.Var{Name: "+"},
+			Args: []ast.Expr{&ast.Var{Name: "x"}, &ast.Var{Name: "y"}},
+		},
+	}
+
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	typeString := types.TypeString(ty)
+	if typeString != "Num 'a => ('a, 'a) -> 'a" {
+		t.Fatalf("type: %s", typeString)
+	}
+	t.Logf("type: %s", typeString)
+
+	expr = &ast.Call{
+		Func: expr,
+		Args: []ast.Expr{newbool, newbool},
+	}
+
+	ty, err = ctx.Infer(expr, env)
+	if err == nil {
+		t.Fatalf("expected invalid kind error")
+	}
+	t.Logf("Passed check for kind-constraint error: %v", err)
 }
 
 func TestMutuallyRecursiveLet(t *testing.T) {
-	inf := NewInference()
-	env := NewTypeEnv()
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
 	env.Add("add", &types.Arrow{
 		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
 		Return: &types.Const{"int"},
@@ -292,11 +331,11 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 	exprString := ast.ExprString(expr)
 
 	expect := "" +
-		"let id = fun x -> x" +
-		" and f = fun x -> if(id(newbool()), id(x), g(add(x, x)))" +
-		" and g = fun x -> if(newbool(), x, id(f(x)))" +
+		"let id(x) = x" +
+		" and f(x) = if(id(newbool()), id(x), g(add(x, x)))" +
+		" and g(x) = if(newbool(), x, id(f(x)))" +
 		" in" +
-		" let h = fun x -> id(f(x))" +
+		" let h(x) = id(f(x))" +
 		" in {f = f, g = g, h = h, id = id}"
 
 	if exprString != expect {
@@ -306,29 +345,25 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 
 	// Infer twice to ensure state is properly reset between calls:
 
-	envCount := len(env.Map())
+	envCount := len(env.Types)
 
-	ty, err := inf.ExprType(env, expr)
+	ty, err := ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(env.Map()) != envCount {
+	if len(env.Types) != envCount {
 		t.Fatalf("expected unmodified type environment after inference")
 	}
 
-	ty, err = inf.ExprType(env, expr)
+	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	typeString := types.TypeString(ty)
-	if typeString != "forall[a] {f : int -> int, g : int -> int, h : int -> int, id : a -> a}" {
+	if typeString != "{f : int -> int, g : int -> int, h : int -> int, id : 'a -> 'a}" {
 		t.Fatalf("type: %s", typeString)
 	}
 	t.Logf("type: %s", typeString)
-
-	// ast.WalkExpr(inf.AnnotatedExpr(), func(e ast.Expr) {
-	// 	t.Logf("\n%s\n:: %s\n", ast.ExprString(e), types.TypeString(e.Type()))
-	// })
 }

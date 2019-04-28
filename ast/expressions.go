@@ -55,7 +55,7 @@ type Var struct {
 func (e *Var) Type() types.Type     { return types.RealType(e.inferred) }
 func (e *Var) SetType(t types.Type) { e.inferred = t }
 
-// Application
+// Application: `f(x)`
 type Call struct {
 	Func     Expr
 	Args     []Expr
@@ -65,7 +65,7 @@ type Call struct {
 func (e *Call) Type() types.Type     { return types.RealType(e.inferred) }
 func (e *Call) SetType(t types.Type) { e.inferred = t }
 
-// Abstraction
+// Abstraction: `fun x -> x`
 type Func struct {
 	ArgNames []string
 	Body     Expr
@@ -94,6 +94,7 @@ type LetGroup struct {
 
 func (e *LetGroup) Type() types.Type { return e.Body.Type() }
 
+// Paired identifier and value
 type LetBinding struct {
 	Var   string
 	Value Expr
@@ -121,6 +122,7 @@ type RecordExtend struct {
 func (e *RecordExtend) Type() types.Type         { return types.RealType(e.inferred) }
 func (e *RecordExtend) SetType(rt *types.Record) { e.inferred = rt }
 
+// Paired label and value
 type LabelValue struct {
 	Label string
 	Value Expr
@@ -146,7 +148,7 @@ type RecordEmpty struct {
 func (e *RecordEmpty) Type() types.Type         { return types.RealType(e.inferred) }
 func (e *RecordEmpty) SetType(rt *types.Record) { e.inferred = rt }
 
-// New variant value: `:X a`
+// Variant instance: `:X a`
 type Variant struct {
 	Label string
 	Value Expr

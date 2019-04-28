@@ -26,29 +26,68 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-// TypeEnv contains mappings from identifiers to declared types.
+// TypeEnv is a type-enviroment containing mappings from identifiers to declared types.
 type TypeEnv struct {
-	env    map[string]types.Type // declared types
-	nextId int                   // next unused type-variable id
+	// Next unused type-variable id
+	NextVarId int
+	// Next unused kind id
+	NextKindId int
+	// Predeclared types in the parent of the current type-environment
+	Parent *TypeEnv
+	// Mappings from identifiers to declared types in the current type-environment
+	Types map[string]types.Type
 }
 
-// Create a type environment.
-func NewTypeEnv() *TypeEnv { return &TypeEnv{env: make(map[string]types.Type)} }
-
-// Create a fresh generic type-variable.
-func (e *TypeEnv) NewGenericVar() *types.Var { return types.NewGenericVar(e.freshId()) }
-
-// Declare a type for an identifier within the type environment.
-func (e *TypeEnv) Add(name string, t types.Type) { e.env[name] = generalize(-1, t) }
-
-// Remove a declared type for an identifier from the type environment.
-func (e *TypeEnv) Remove(name string) { delete(e.env, name) }
-
-// Get the map of declared types for the environment.
-func (e *TypeEnv) Map() map[string]types.Type { return e.env }
+// Create a type-environment. The new environment will inherit bindings from the parent, if the parent is not nil.
+func NewTypeEnv(parent *TypeEnv) *TypeEnv {
+	env := &TypeEnv{
+		Parent: parent,
+		Types:  make(map[string]types.Type),
+	}
+	if parent != nil {
+		env.NextVarId = parent.NextVarId
+		env.NextKindId = parent.NextKindId
+	}
+	return env
+}
 
 func (e *TypeEnv) freshId() int {
-	id := e.nextId
-	e.nextId++
+	id := e.NextVarId
+	e.NextVarId++
 	return id
+}
+
+// Create a new type-qualifier with the given name, which restricts types
+// to the given set of type-constants.
+func (e *TypeEnv) NewUnion(name string, anyOf ...*types.Const) *types.Kind {
+	k := types.NewUnion(name, e.NextKindId, anyOf...)
+	e.NextKindId++
+	return k
+}
+
+// Create a generic type-variable with a unique id.
+func (e *TypeEnv) NewGenericVar() *types.Var { return types.NewGenericVar(e.freshId()) }
+
+// Create a qualified type-variable with a unique id.
+func (e *TypeEnv) NewQualifiedVar(kinds ...*types.Kind) *types.Var {
+	tv := types.NewGenericVar(e.freshId())
+	tv.AddKinds(kinds)
+	return tv
+}
+
+// Declare a type for an identifier within the type environment.
+func (e *TypeEnv) Add(name string, t types.Type) { e.Types[name] = generalize(-1, t) }
+
+// Remove a declared type for an identifier from the type environment.
+func (e *TypeEnv) Remove(name string) { delete(e.Types, name) }
+
+// Lookup the type for an identifier in the environment or its parent environment(s).
+func (e *TypeEnv) Lookup(name string) (types.Type, bool) {
+	if t, ok := e.Types[name]; ok {
+		return t, ok
+	}
+	if e.Parent == nil {
+		return nil, false
+	}
+	return e.Parent.Lookup(name)
 }

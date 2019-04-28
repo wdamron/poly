@@ -113,7 +113,7 @@ func generalizeRecursive(level int, t types.Type, genericCount *int) types.Type 
 	return t
 }
 
-func (ti *Inference) instantiate(level int, t types.Type) types.Type {
+func (ti *InferenceContext) instantiate(level int, t types.Type) types.Type {
 	if !t.IsGeneric() {
 		return t
 	}
@@ -124,7 +124,8 @@ func (ti *Inference) instantiate(level int, t types.Type) types.Type {
 		if tv, ok := ti.instLookup[id]; ok {
 			return tv
 		}
-		tv := ti.newVar(level)
+		tv := ti.varTracker.New(level)
+		tv.AddKinds(t.Kinds())
 		ti.instLookup[id] = tv
 		return tv
 
@@ -165,17 +166,19 @@ func (ti *Inference) instantiate(level int, t types.Type) types.Type {
 	panic("unexpected generic type " + t.TypeName())
 }
 
-func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (types.Type, error) {
+func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Type, error) {
 	switch e := e.(type) {
 	case *ast.Var:
-		v, ok := env[e.Name]
+		v, ok := env.Lookup(e.Name)
 		if !ok {
 			ti.invalid, ti.err = e, errors.New("Variable "+e.Name+" not found")
 			return nil, ti.err
 		}
 		ti.clearInstLookup()
 		t := ti.instantiate(level, v.(types.Type))
-		e.SetType(t)
+		if ti.annotate {
+			e.SetType(t)
+		}
 		return t, nil
 
 	case *ast.Let:
@@ -185,16 +188,16 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 				return nil, err
 			}
 			stashed := ti.stash(env, e.Var)
-			env[e.Var] = generalize(level, t)
+			env.Types[e.Var] = generalize(level, t)
 			t, err = ti.infer(env, level, e.Body)
-			delete(env, e.Var)
+			delete(env.Types, e.Var)
 			ti.unstash(env, stashed)
 			return t, err
 		}
 		// Allow self-references within function types:
-		tv := ti.newVar(level + 1)
+		tv := ti.varTracker.New(level + 1)
 		stashed := ti.stash(env, e.Var)
-		env[e.Var] = tv
+		env.Types[e.Var] = tv
 		t, err := ti.infer(env, level+1, e.Value)
 		if err != nil {
 			return nil, err
@@ -203,9 +206,9 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		env[e.Var] = generalize(level, t)
+		env.Types[e.Var] = generalize(level, t)
 		t, err = ti.infer(env, level, e.Body)
-		delete(env, e.Var)
+		delete(env.Types, e.Var)
 		ti.unstash(env, stashed)
 		return t, err
 
@@ -221,17 +224,18 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 		// Grouped let-bindings are sorted into strongly-connected components, then type-checked in dependency order:
 		for _, scc := range ti.analysis.sccs[ti.analysis.groupNums[e]] {
 			// Add fresh type-variables for bindings:
-			tvs := ti.newVars(level+1, len(scc))
-			for i, bindNum := range scc {
+			vars := ti.varTracker.NewList(level+1, len(scc))
+			tv, tail := vars.Head(), vars.Tail()
+			for _, bindNum := range scc {
 				v := e.Vars[bindNum]
-				tv := &tvs[i]
 				stashed += ti.stash(env, v.Var)
-				env[v.Var] = tv
+				env.Types[v.Var] = tv
+				tv, tail = tail.Head(), tail.Tail()
 			}
 			// Infer types:
-			for i, bindNum := range scc {
+			tv, tail = vars.Head(), vars.Tail()
+			for _, bindNum := range scc {
 				v := e.Vars[bindNum]
-				tv := &tvs[i]
 				var isFunc bool
 				// To prevent self-references within non-function types, stash/remove the type-variable:
 				if _, isFunc = v.Value.(*ast.Func); !isFunc {
@@ -239,13 +243,13 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 					for i := 0; i < stashed; i++ {
 						existing := ti.envStash[len(ti.envStash)-(1+i)]
 						if existing.Name == v.Var {
-							env[v.Var] = existing.Type
+							env.Types[v.Var] = existing.Type
 							exists = true
 							break
 						}
 					}
 					if !exists {
-						delete(env, v.Var)
+						delete(env.Types, v.Var)
 					}
 				}
 				t, err := ti.infer(env, level+1, v.Value)
@@ -258,19 +262,21 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 				}
 				// Restore the previously stashed/removed type-variable:
 				if !isFunc {
-					env[v.Var] = tv
+					env.Types[v.Var] = tv
 				}
+				tv, tail = tail.Head(), tail.Tail()
 			}
 			// Generalize types:
-			for i, bindNum := range scc {
+			tv, tail = vars.Head(), vars.Tail()
+			for _, bindNum := range scc {
 				v := e.Vars[bindNum]
-				tv := &tvs[i]
-				env[v.Var] = generalize(level, tv)
+				env.Types[v.Var] = generalize(level, tv)
+				tv, tail = tail.Head(), tail.Tail()
 			}
 		}
 		t, err := ti.infer(env, level, e.Body)
 		for _, v := range e.Vars {
-			delete(env, v.Var)
+			delete(env.Types, v.Var)
 		}
 		ti.unstash(env, stashed)
 		return t, err
@@ -278,20 +284,23 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 	case *ast.Func:
 		args := make([]types.Type, len(e.ArgNames))
 		stashed := 0
-		tvs := ti.newVars(level, len(e.ArgNames))
+		vars := ti.varTracker.NewList(level, len(e.ArgNames))
+		tv, tail := vars.Head(), vars.Tail()
 		for i, name := range e.ArgNames {
 			stashed += ti.stash(env, name)
-			tv := &tvs[i]
 			args[i] = tv
-			env[name] = tv
+			env.Types[name] = tv
+			tv, tail = tail.Head(), tail.Tail()
 		}
 		ret, err := ti.infer(env, level, e.Body)
 		for _, name := range e.ArgNames {
-			delete(env, name)
+			delete(env.Types, name)
 		}
 		ti.unstash(env, stashed)
 		t := &types.Arrow{Args: args, Return: ret}
-		e.SetType(t)
+		if ti.annotate {
+			e.SetType(t)
+		}
 		return t, err
 
 	case *ast.Call:
@@ -314,17 +323,21 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 				return nil, err
 			}
 		}
-		e.SetType(ret)
+		if ti.annotate {
+			e.SetType(ret)
+		}
 		return ret, nil
 
 	case *ast.RecordEmpty:
-		rt := &types.Record{Row: types.RowEmpty{}}
-		e.SetType(rt)
+		rt := &types.Record{Row: types.RowEmptyPointer}
+		if ti.annotate {
+			e.SetType(rt)
+		}
 		return rt, nil
 
 	case *ast.RecordSelect:
-		rowType := ti.newVar(level)
-		labelType := ti.newVar(level)
+		rowType := ti.varTracker.New(level)
+		labelType := ti.varTracker.New(level)
 		labels := types.SingletonTypeMap(e.Label, labelType)
 		paramType := &types.Record{Row: &types.RowExtend{Row: rowType, Labels: labels}}
 		recordType, err := ti.infer(env, level, e.Record)
@@ -335,12 +348,14 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		e.SetType(labelType)
+		if ti.annotate {
+			e.SetType(labelType)
+		}
 		return labelType, nil
 
 	case *ast.RecordRestrict:
-		rowType := ti.newVar(level)
-		labelType := ti.newVar(level)
+		rowType := ti.varTracker.New(level)
+		labelType := ti.varTracker.New(level)
 		labels := types.SingletonTypeMap(e.Label, labelType)
 		paramType := &types.Record{Row: &types.RowExtend{Row: rowType, Labels: labels}}
 		recordType, err := ti.infer(env, level, e.Record)
@@ -352,7 +367,9 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			return nil, err
 		}
 		rt := &types.Record{Row: rowType}
-		e.SetType(rt)
+		if ti.annotate {
+			e.SetType(rt)
+		}
 		return rt, nil
 
 	case *ast.RecordExtend:
@@ -364,7 +381,7 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			}
 			mb.Set(label.Label, types.SingletonTypeList(t))
 		}
-		rowType := ti.newVar(level)
+		rowType := ti.varTracker.New(level)
 		recordType, err := ti.infer(env, level, e.Record)
 		if err != nil {
 			return nil, err
@@ -374,12 +391,14 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			return nil, err
 		}
 		rt := &types.Record{Row: &types.RowExtend{Row: rowType, Labels: mb.Build()}}
-		e.SetType(rt)
+		if ti.annotate {
+			e.SetType(rt)
+		}
 		return rt, nil
 
 	case *ast.Variant:
-		rowType := ti.newVar(level)
-		variantType := ti.newVar(level)
+		rowType := ti.varTracker.New(level)
+		variantType := ti.varTracker.New(level)
 		t, err := ti.infer(env, level, e.Value)
 		if err != nil {
 			return nil, err
@@ -394,9 +413,9 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 
 	case *ast.Match:
 		if e.Default == nil {
-			retType := ti.newVar(level)
+			retType := ti.varTracker.New(level)
 			matchType, err := ti.infer(env, level, e.Value)
-			casesRow, err := ti.inferCases(env, level, retType, types.RowEmpty{}, e.Cases)
+			casesRow, err := ti.inferCases(env, level, retType, types.RowEmptyPointer, e.Cases)
 			if err != nil {
 				return nil, err
 			}
@@ -404,14 +423,16 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 				ti.invalid, ti.err = e, err
 				return nil, err
 			}
-			e.SetType(retType)
+			if ti.annotate {
+				e.SetType(retType)
+			}
 			return retType, nil
 		}
-		defaultType := ti.newVar(level)
+		defaultType := ti.varTracker.New(level)
 		stashed := ti.stash(env, e.Default.Var)
-		env[e.Default.Var] = &types.Variant{Row: defaultType}
+		env.Types[e.Default.Var] = &types.Variant{Row: defaultType}
 		retType, err := ti.infer(env, level, e.Default.Value)
-		delete(env, e.Default.Var)
+		delete(env.Types, e.Default.Var)
 		ti.unstash(env, stashed)
 		if err != nil {
 			return nil, err
@@ -429,7 +450,9 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		e.SetType(retType)
+		if ti.annotate {
+			e.SetType(retType)
+		}
 		return retType, nil
 	}
 
@@ -443,7 +466,7 @@ func (ti *Inference) infer(env map[string]types.Type, level int, e ast.Expr) (ty
 	return nil, ti.err
 }
 
-func (ti *Inference) matchFuncType(argc int, t types.Type) (args []types.Type, ret types.Type, err error) {
+func (ti *InferenceContext) matchFuncType(argc int, t types.Type) (args []types.Type, ret types.Type, err error) {
 	switch t := t.(type) {
 	case *types.Arrow:
 		if len(t.Args) != argc {
@@ -457,12 +480,16 @@ func (ti *Inference) matchFuncType(argc int, t types.Type) (args []types.Type, r
 			return ti.matchFuncType(argc, t.Link())
 		case t.IsUnboundVar():
 			args = make([]types.Type, argc)
-			tvs := ti.newVars(t.Level(), argc+1)
+			vars := ti.varTracker.NewList(t.Level(), argc+1)
+			tv, tail := vars.Head(), vars.Tail()
 			for i := 0; i < argc; i++ {
-				args[i] = &tvs[i]
+				args[i] = tv
+				tv, tail = tail.Head(), tail.Tail()
 			}
-			ret = &tvs[argc]
-			t.SetLink(&types.Arrow{Args: args, Return: ret})
+			ret = tv
+			if err := t.SetLink(&types.Arrow{Args: args, Return: ret}); err != nil {
+				return nil, nil, err
+			}
 			return args, ret, nil
 		default:
 			return nil, nil, errors.New("Type variable for applied function has not been instantiated")
@@ -472,18 +499,18 @@ func (ti *Inference) matchFuncType(argc int, t types.Type) (args []types.Type, r
 	return nil, nil, errors.New("Unexpected type " + t.TypeName() + " for applied function")
 }
 
-func (ti *Inference) inferCases(env map[string]types.Type, level int, retType, rowType types.Type, cases []ast.MatchCase) (types.Type, error) {
-	casesRow := rowType
+func (ti *InferenceContext) inferCases(env *TypeEnv, level int, retType, rowType types.Type, cases []ast.MatchCase) (types.Type, error) {
 	extensions := make([]types.RowExtend, len(cases))
-	tvs := ti.newVars(level, len(cases))
+	vars := ti.varTracker.NewList(level, len(cases))
+	tv, tail := vars.Head(), vars.Tail()
 	for i := len(cases) - 1; i >= 0; i-- {
 		c := cases[i]
-		variantType := &tvs[i]
+		variantType := tv
 		stashed := ti.stash(env, c.Var)
-		env[c.Var] = variantType
+		env.Types[c.Var] = variantType
 		c.SetVariantType(variantType)
 		t, err := ti.infer(env, level, c.Value)
-		delete(env, c.Var)
+		delete(env.Types, c.Var)
 		ti.unstash(env, stashed)
 		if err != nil {
 			return nil, err
@@ -492,8 +519,9 @@ func (ti *Inference) inferCases(env map[string]types.Type, level int, retType, r
 			return nil, err
 		}
 		labels := types.SingletonTypeMap(c.Label, variantType)
-		extensions[i].Row, extensions[i].Labels = casesRow, labels
-		casesRow = &extensions[i]
+		extensions[i].Row, extensions[i].Labels = rowType, labels
+		rowType = &extensions[i]
+		tv, tail = tail.Head(), tail.Tail()
 	}
-	return casesRow, nil
+	return rowType, nil
 }

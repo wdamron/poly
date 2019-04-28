@@ -41,20 +41,23 @@ import (
 	"errors"
 
 	"github.com/wdamron/poly/ast"
+	"github.com/wdamron/poly/internal/typeutil"
 	"github.com/wdamron/poly/types"
 )
 
-// Inference is a re-usable context for type inference.
-type Inference struct {
-	nextId     int                // next unused type-variable id
-	envStash   []stashedType      // shadowed variables
-	instLookup map[int]*types.Var // instantiation lookup for generic type-variables
-	err        error
-	invalid    ast.Expr
-	rootExpr   ast.Expr
-	analysis   analysis
-	analyzed   bool
-	needsReset bool
+// InferenceContext is a re-usable context for type inference.
+type InferenceContext struct {
+	varTracker  typeutil.VarTracker
+	envStash    []stashedType      // shadowed variables
+	instLookup  map[int]*types.Var // instantiation lookup for generic type-variables
+	err         error
+	invalid     ast.Expr
+	rootExpr    ast.Expr
+	analysis    analysis
+	initialized bool
+	analyzed    bool
+	needsReset  bool
+	annotate    bool
 
 	// initial space:
 	_envStash [32]stashedType
@@ -66,54 +69,59 @@ type stashedType struct {
 }
 
 // Create a new type-inference context. A context may be re-used across calls of ExprType.
-func NewInference() *Inference {
-	ti := &Inference{instLookup: make(map[int]*types.Var, 16)}
-	ti.analysis.init()
-	ti.envStash = ti._envStash[:0]
+func NewContext() *InferenceContext {
+	ti := &InferenceContext{}
+	ti.init()
 	return ti
 }
 
 // Infer the type of expr within env.
-func (ti *Inference) ExprType(env *TypeEnv, expr ast.Expr) (types.Type, error) {
-	if expr == nil {
-		return nil, errors.New("Empty expression")
-	}
-	if env == nil {
-		env = NewTypeEnv()
-	}
-	if ti.needsReset {
-		ti.Reset()
-	}
-	ti.nextId = env.nextId
-	ti.rootExpr = ast.CopyExpr(expr)
-	t, err := ti.infer(env.Map(), 0, ti.rootExpr)
-	ti.needsReset = true
-	if err != nil {
-		return t, err
-	}
-	return generalize(-1, t), nil
+func (ti *InferenceContext) Infer(expr ast.Expr, env *TypeEnv) (types.Type, error) {
+	nocopy := false
+	_, t, err := ti.inferRoot(expr, env, nocopy)
+	return t, err
 }
 
-// Infer the type of expr within env. The type-annotated AST for the expression will be returned with the type.
-func (ti *Inference) AnnotatedExprType(env *TypeEnv, expr ast.Expr) (types.Type, ast.Expr, error) {
-	t, err := ti.ExprType(env, expr)
-	return t, ti.rootExpr, err
+// Infer the type of expr within env. The type-annotated copy of expr will be returned.
+func (ti *InferenceContext) Annotate(expr ast.Expr, env *TypeEnv) (ast.Expr, error) {
+	nocopy := false
+	ti.annotate = true
+	root, _, err := ti.inferRoot(expr, env, nocopy)
+	ti.annotate = false
+	return root, err
 }
 
-// Get the type-annotated AST for the most-recently inferred expression.
-func (ti *Inference) AnnotatedExpr() ast.Expr { return ti.rootExpr }
+// Infer the type of expr within env. Type-annotations will be added directly to expr.
+// All sub-expressions of expr must have unique addresses.
+func (ti *InferenceContext) AnnotateDirect(expr ast.Expr, env *TypeEnv) error {
+	nocopy := true
+	ti.annotate = true
+	_, _, err := ti.inferRoot(expr, env, nocopy)
+	ti.annotate = false
+	return err
+}
 
 // Get the error which caused inference to fail.
-func (ti *Inference) Error() error { return ti.err }
+func (ti *InferenceContext) Error() error { return ti.err }
 
 // Get the expression which caused inference to fail.
-func (ti *Inference) InvalidExpr() ast.Expr { return ti.invalid }
+func (ti *InferenceContext) InvalidExpr() ast.Expr { return ti.invalid }
 
 // Reset the state of the context. The context will be reset automatically between calls of ExprType.
-func (ti *Inference) Reset() {
+func (ti *InferenceContext) Reset() {
 	if !ti.needsReset {
 		return
 	}
+	ti.reset()
+}
+
+func (ti *InferenceContext) init() {
+	ti.analysis.init()
+	ti.envStash, ti.instLookup, ti.initialized =
+		ti._envStash[:0], make(map[int]*types.Var, 16), true
+}
+
+func (ti *InferenceContext) reset() {
 	ti.clearInstLookup()
 	if ti.analyzed {
 		ti.analysis.reset()
@@ -122,55 +130,58 @@ func (ti *Inference) Reset() {
 	for i := range ti._envStash {
 		ti._envStash[i] = stashedType{}
 	}
-	ti.nextId, ti.rootExpr, ti.err, ti.invalid, ti.envStash, ti.needsReset =
-		0, nil, nil, nil, ti._envStash[:0], false
+	ti.varTracker.Reset()
+	ti.rootExpr, ti.err, ti.invalid, ti.envStash, ti.needsReset =
+		nil, nil, nil, ti._envStash[:0], false
 }
 
-func (ti *Inference) freshId() int {
-	id := ti.nextId
-	ti.nextId++
-	return id
-}
-
-func (ti *Inference) newVar(level int) *types.Var {
-	return types.NewVar(ti.freshId(), level)
-}
-
-func (ti *Inference) newVars(level, count int) []types.Var {
-	vars := make([]types.Var, count)
-	for i := range vars {
-		vars[i].Update(ti.freshId(), level, nil)
+func (ti *InferenceContext) inferRoot(root ast.Expr, env *TypeEnv, nocopy bool) (ast.Expr, types.Type, error) {
+	if root == nil {
+		return nil, nil, errors.New("Empty expression")
 	}
-	return vars
+	if !nocopy {
+		root = ast.CopyExpr(root)
+	}
+	env = NewTypeEnv(env)
+	if ti.needsReset {
+		ti.reset()
+	} else if !ti.initialized {
+		ti.init()
+	}
+	ti.rootExpr, ti.varTracker.NextId = root, env.NextVarId
+	t, err := ti.infer(env, 0, root)
+	ti.needsReset, ti.rootExpr = true, nil
+	if err != nil {
+		return root, t, err
+	}
+	t = generalize(-1, t)
+	ti.varTracker.FlattenLinks()
+	return root, t, nil
 }
 
-func (ti *Inference) newGenVar() *types.Var {
-	return types.NewGenericVar(ti.freshId())
+func (ti *InferenceContext) clearInstLookup() {
+	for id := range ti.instLookup {
+		delete(ti.instLookup, id)
+	}
 }
 
 // returns 1 if the variable was stashed, otherwise 0
-func (ti *Inference) stash(env map[string]types.Type, name string) int {
-	if existing, exists := env[name]; exists {
+func (ti *InferenceContext) stash(env *TypeEnv, name string) int {
+	if existing, exists := env.Types[name]; exists {
 		ti.envStash = append(ti.envStash, stashedType{name, existing})
 		return 1
 	}
 	return 0
 }
 
-func (ti *Inference) unstash(env map[string]types.Type, count int) {
+func (ti *InferenceContext) unstash(env *TypeEnv, count int) {
 	if count <= 0 {
 		return
 	}
 	stash := ti.envStash
 	unstashed := 0
 	for i := len(stash) - 1; unstashed < count && i >= 0; i, unstashed = i-1, unstashed+1 {
-		env[stash[i].Name] = stash[i].Type
+		env.Types[stash[i].Name] = stash[i].Type
 	}
 	ti.envStash = ti.envStash[0 : len(stash)-unstashed]
-}
-
-func (ti *Inference) clearInstLookup() {
-	for id := range ti.instLookup {
-		delete(ti.instLookup, id)
-	}
 }

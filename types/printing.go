@@ -32,40 +32,55 @@ import (
 func TypeString(t Type) string {
 	p := typePrinter{}
 	typeString(&p, false, t)
-	if p.counter == 0 {
+	if len(p.kinds) == 0 {
 		return p.sb.String()
 	}
-	names := make([]string, 0, len(p.ids))
-	for _, name := range p.ids {
-		names = append(names, name)
+
+	order := make([]int, 0, len(p.kinds))
+	for id := range p.kinds {
+		order = append(order, id)
 	}
-	sort.Strings(names)
+	sort.Slice(order, func(i, j int) bool { return p.idNames[order[i]] < p.idNames[order[j]] })
 	var sb strings.Builder
-	sb.WriteString("forall[")
-	for i, name := range names {
-		if i > 0 {
-			sb.WriteByte(' ')
-		}
-		sb.WriteString(name)
+	multipleKinds := len(order) > 1 || len(p.kinds[order[0]]) > 1
+	if multipleKinds {
+		sb.WriteByte('(')
 	}
-	sb.WriteString("] ")
+	for i, id := range order {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		idName := p.idNames[id]
+		for j, k := range p.kinds[id] {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(k.Name)
+			sb.WriteByte(' ')
+			sb.WriteString(idName)
+		}
+	}
+	if multipleKinds {
+		sb.WriteByte(')')
+	}
+
+	sb.WriteString(" => ")
 	sb.WriteString(p.sb.String())
 	return sb.String()
 }
 
 type typePrinter struct {
-	ids     map[int]string
+	idNames map[int]string
+	kinds   map[int][]*Kind
 	sb      strings.Builder
-	counter int
 }
 
 func (p *typePrinter) nextName() string {
-	i := p.counter
-	p.counter++
+	i := len(p.idNames)
 	if i >= 26 {
 		return string(byte(97+i%26)) + strconv.Itoa(i/26)
 	}
-	return string(byte(97 + i%26))
+	return "'" + string(byte(97+i%26))
 }
 
 func typeString(p *typePrinter, simple bool, t Type) {
@@ -75,21 +90,35 @@ func typeString(p *typePrinter, simple bool, t Type) {
 
 	case *Var:
 		switch {
+		case t.IsUnboundVar():
+			p.sb.WriteString("'_")
+			p.sb.WriteString(strconv.Itoa(t.Id()))
+
+		case t.IsLinkVar():
+			typeString(p, simple, t.Link())
+
 		case t.IsGenericVar():
-			if len(p.ids) == 0 {
-				p.ids = make(map[int]string)
-			} else if name, ok := p.ids[t.Id()]; ok {
+			if len(p.idNames) == 0 {
+				p.idNames = make(map[int]string)
+			} else if name, ok := p.idNames[t.Id()]; ok {
 				p.sb.WriteString(name)
 				return
 			}
 			name := p.nextName()
-			p.ids[t.Id()] = name
+			p.idNames[t.Id()] = name
 			p.sb.WriteString(name)
-		case t.IsUnboundVar():
-			p.sb.WriteByte('_')
-			p.sb.WriteString(strconv.Itoa(t.Id()))
-		case t.IsLinkVar():
-			typeString(p, simple, t.Link())
+		}
+		if len(t.kinds) == 0 {
+			return
+		}
+		if p.kinds == nil {
+			p.kinds = map[int][]*Kind{
+				t.Id(): t.kinds,
+			}
+		} else {
+			if _, ok := p.kinds[t.Id()]; !ok {
+				p.kinds[t.Id()] = t.kinds
+			}
 		}
 
 	case *App:
@@ -136,7 +165,7 @@ func typeString(p *typePrinter, simple bool, t Type) {
 		typeString(p, false, t.Row)
 		p.sb.WriteByte(']')
 
-	case RowEmpty: // nothing to print
+	case *RowEmpty: // nothing to print
 
 	case *RowExtend:
 		labels, row, err := FlattenRowType(t)
@@ -163,7 +192,7 @@ func typeString(p *typePrinter, simple bool, t Type) {
 		})
 		rest := RealType(row)
 		switch rest.(type) {
-		case RowEmpty: // nothing to print
+		case *RowEmpty: // nothing to print
 		case *RowExtend:
 			p.sb.WriteString("<INVALID-ROW>")
 			break
