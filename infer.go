@@ -56,7 +56,7 @@ func generalizeRecursive(level int, t types.Type, genericCount *int) types.Type 
 		for i, arg := range t.Args {
 			t.Args[i] = generalizeRecursive(level, arg, genericCount)
 		}
-		t.Func = generalizeRecursive(level, t.Func, genericCount)
+		t.Const = generalizeRecursive(level, t.Const, genericCount)
 		if *genericCount > gcount {
 			t.HasGenericVars = true
 		}
@@ -125,7 +125,10 @@ func (ti *InferenceContext) instantiate(level int, t types.Type) types.Type {
 			return tv
 		}
 		tv := ti.varTracker.New(level)
-		tv.AddKinds(t.Kinds())
+		constraints := t.Constraints()
+		constraints2 := make([]types.InstanceConstraint, len(constraints))
+		copy(constraints2, constraints)
+		tv.SetConstraints(constraints2)
 		ti.instLookup[id] = tv
 		return tv
 
@@ -134,7 +137,7 @@ func (ti *InferenceContext) instantiate(level int, t types.Type) types.Type {
 		for i, arg := range t.Args {
 			args[i] = ti.instantiate(level, arg)
 		}
-		return &types.App{Func: ti.instantiate(level, t.Func), Args: args}
+		return &types.App{Const: ti.instantiate(level, t.Const), Args: args}
 
 	case *types.Arrow:
 		args := make([]types.Type, len(t.Args))
@@ -142,6 +145,9 @@ func (ti *InferenceContext) instantiate(level int, t types.Type) types.Type {
 			args[i] = ti.instantiate(level, arg)
 		}
 		return &types.Arrow{Args: args, Return: ti.instantiate(level, t.Return)}
+
+	case *types.Method:
+		return ti.instantiate(level, t.TypeClass.Methods[t.Name])
 
 	case *types.Record:
 		return &types.Record{Row: ti.instantiate(level, t.Row)}
@@ -169,13 +175,13 @@ func (ti *InferenceContext) instantiate(level int, t types.Type) types.Type {
 func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Type, error) {
 	switch e := e.(type) {
 	case *ast.Var:
-		v, ok := env.Lookup(e.Name)
+		t, ok := env.Lookup(e.Name)
 		if !ok {
 			ti.invalid, ti.err = e, errors.New("Variable "+e.Name+" not found")
 			return nil, ti.err
 		}
 		ti.clearInstLookup()
-		t := ti.instantiate(level, v.(types.Type))
+		t = ti.instantiate(level, t)
 		if ti.annotate {
 			e.SetType(t)
 		}
@@ -307,6 +313,39 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Ty
 		ft, err := ti.infer(env, level, e.Func)
 		if err != nil {
 			return nil, err
+		}
+		if method, isMethod := ft.(*types.Method); isMethod {
+			speculating := ti.speculate
+			ti.speculate = true
+			stashedLinks := ti.linkStash
+			var match *types.Arrow
+			found := method.TypeClass.FindInstance(func(inst *types.Instance) (found bool) {
+				arrow := inst.Methods[method.Name]
+				if len(arrow.Args) != len(e.Args) {
+					return false
+				}
+				arrow = ti.instantiate(level, arrow).(*types.Arrow)
+				for i, arg := range e.Args {
+					ta, err := ti.infer(env, level, arg)
+					if err != nil {
+						return false
+					}
+					if err := ti.unify(arrow.Args[i], ta); err != nil {
+						ti.unstashLinks(len(ti.linkStash) - len(stashedLinks))
+						return false
+					}
+				}
+				if ti.annotate {
+					e.SetType(arrow.Return)
+				}
+				match = arrow
+				return true
+			})
+			ti.speculate, ti.linkStash = speculating, stashedLinks
+			if !found {
+				ti.invalid, ti.err = e, errors.New("No matching instance found for method "+method.Name)
+			}
+			return match.Return, ti.err
 		}
 		args, ret, err := ti.matchFuncType(len(e.Args), ft)
 		if err != nil {
@@ -487,9 +526,7 @@ func (ti *InferenceContext) matchFuncType(argc int, t types.Type) (args []types.
 				tv, tail = tail.Head(), tail.Tail()
 			}
 			ret = tv
-			if err := t.SetLink(&types.Arrow{Args: args, Return: ret}); err != nil {
-				return nil, nil, err
-			}
+			t.SetLink(&types.Arrow{Args: args, Return: ret})
 			return args, ret, nil
 		default:
 			return nil, nil, errors.New("Type variable for applied function has not been instantiated")

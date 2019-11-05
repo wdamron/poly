@@ -33,9 +33,10 @@ type Type interface {
 }
 
 func (t *Var) TypeName() string       { return "Var" }
-func (t *Const) TypeName() string     { return "Const" }
+func (t *Const) TypeName() string     { return t.Name }
 func (t *App) TypeName() string       { return "App" }
 func (t *Arrow) TypeName() string     { return "Arrow" }
+func (t *Method) TypeName() string    { return "Method" }
 func (t *Record) TypeName() string    { return "Record" }
 func (t *Variant) TypeName() string   { return "Variant" }
 func (t *RowExtend) TypeName() string { return "RowExtend" }
@@ -51,6 +52,7 @@ func (t *Var) IsGeneric() bool {
 func (t *Const) IsGeneric() bool     { return false }
 func (t *App) IsGeneric() bool       { return t.HasGenericVars }
 func (t *Arrow) IsGeneric() bool     { return t.HasGenericVars }
+func (t *Method) IsGeneric() bool    { return t.TypeClass.Methods[t.Name].HasGenericVars }
 func (t *Record) IsGeneric() bool    { return t.HasGenericVars }
 func (t *Variant) IsGeneric() bool   { return t.HasGenericVars }
 func (t *RowExtend) IsGeneric() bool { return t.HasGenericVars }
@@ -63,7 +65,7 @@ type Const struct {
 
 // Type application: `list[int]`
 type App struct {
-	Func           Type
+	Const          Type
 	Args           []Type
 	HasGenericVars bool
 }
@@ -72,6 +74,13 @@ type App struct {
 type Arrow struct {
 	Args           []Type
 	Return         Type
+	HasGenericVars bool
+}
+
+// Type-class method type: `('a, int) -> 'a`
+type Method struct {
+	TypeClass      *TypeClass
+	Name           string
 	HasGenericVars bool
 }
 

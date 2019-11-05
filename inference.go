@@ -49,7 +49,9 @@ import (
 type InferenceContext struct {
 	varTracker  typeutil.VarTracker
 	envStash    []stashedType      // shadowed variables
+	linkStash   []stashedLink      // stashed type-variables (during speculative unification)
 	instLookup  map[int]*types.Var // instantiation lookup for generic type-variables
+	speculate   bool
 	err         error
 	invalid     ast.Expr
 	rootExpr    ast.Expr
@@ -67,6 +69,13 @@ type stashedType struct {
 	Name string
 	Type types.Type
 }
+
+type stashedLink struct {
+	v    *types.Var
+	prev types.Var
+}
+
+func (l *stashedLink) restore() { *l.v = l.prev }
 
 // Create a new type-inference context. A context may be re-used across calls of ExprType.
 func NewContext() *InferenceContext {
@@ -184,4 +193,18 @@ func (ti *InferenceContext) unstash(env *TypeEnv, count int) {
 		env.Types[stash[i].Name] = stash[i].Type
 	}
 	ti.envStash = ti.envStash[0 : len(stash)-unstashed]
+}
+
+func (ti *InferenceContext) stashLink(v *types.Var) {
+	ti.linkStash = append(ti.linkStash, stashedLink{v, *v})
+}
+
+func (ti *InferenceContext) unstashLinks(count int) {
+	if count <= 0 {
+		return
+	}
+	stash := ti.linkStash
+	for i := len(stash) - 1; i > len(stash)-1-count; i-- {
+		*stash[i].v = stash[i].prev
+	}
 }

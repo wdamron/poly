@@ -32,18 +32,18 @@ import (
 func TypeString(t Type) string {
 	p := typePrinter{}
 	typeString(&p, false, t)
-	if len(p.kinds) == 0 {
+	if len(p.preds) == 0 {
 		return p.sb.String()
 	}
 
-	order := make([]int, 0, len(p.kinds))
-	for id := range p.kinds {
+	order := make([]int, 0, len(p.preds))
+	for id := range p.preds {
 		order = append(order, id)
 	}
 	sort.Slice(order, func(i, j int) bool { return p.idNames[order[i]] < p.idNames[order[j]] })
 	var sb strings.Builder
-	multipleKinds := len(order) > 1 || len(p.kinds[order[0]]) > 1
-	if multipleKinds {
+	multiplePreds := len(order) > 1 || len(p.preds[order[0]]) > 1
+	if multiplePreds {
 		sb.WriteByte('(')
 	}
 	for i, id := range order {
@@ -51,16 +51,16 @@ func TypeString(t Type) string {
 			sb.WriteString(", ")
 		}
 		idName := p.idNames[id]
-		for j, k := range p.kinds[id] {
+		for j, k := range p.preds[id] {
 			if j > 0 {
 				sb.WriteString(", ")
 			}
-			sb.WriteString(k.Name)
+			sb.WriteString(k.TypeClass.Name)
 			sb.WriteByte(' ')
 			sb.WriteString(idName)
 		}
 	}
-	if multipleKinds {
+	if multiplePreds {
 		sb.WriteByte(')')
 	}
 
@@ -71,7 +71,7 @@ func TypeString(t Type) string {
 
 type typePrinter struct {
 	idNames map[int]string
-	kinds   map[int][]*Kind
+	preds   map[int][]InstanceConstraint
 	sb      strings.Builder
 }
 
@@ -108,21 +108,21 @@ func typeString(p *typePrinter, simple bool, t Type) {
 			p.idNames[t.Id()] = name
 			p.sb.WriteString(name)
 		}
-		if len(t.kinds) == 0 {
+		if len(t.constraints) == 0 {
 			return
 		}
-		if p.kinds == nil {
-			p.kinds = map[int][]*Kind{
-				t.Id(): t.kinds,
+		if p.preds == nil {
+			p.preds = map[int][]InstanceConstraint{
+				t.Id(): t.constraints,
 			}
 		} else {
-			if _, ok := p.kinds[t.Id()]; !ok {
-				p.kinds[t.Id()] = t.kinds
+			if _, ok := p.preds[t.Id()]; !ok {
+				p.preds[t.Id()] = t.constraints
 			}
 		}
 
 	case *App:
-		typeString(p, true, t.Func)
+		typeString(p, true, t.Const)
 		p.sb.WriteByte('[')
 		for i, arg := range t.Args {
 			if i > 0 {
@@ -154,6 +154,10 @@ func typeString(p *typePrinter, simple bool, t Type) {
 		if simple {
 			p.sb.WriteByte(')')
 		}
+
+	case *Method:
+		arrow := t.TypeClass.Methods[t.Name]
+		typeString(p, false, arrow)
 
 	case *Record:
 		p.sb.WriteByte('{')

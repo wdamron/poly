@@ -20,43 +20,28 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package types
+package util
 
 import (
-	"errors"
+	"sync"
 )
 
-// Kind represents a qualified type.
-type Kind struct {
-	// Id must be unique.
-	Id   int
-	Name string
-	// Check or apply kind-constraints for a type. The Kind argument will be a pointer to this kind.
-	Refine func(Type, *Kind) error
+var dedupePool = sync.Pool{
+	New: func() interface{} {
+		// The Pool's New function should generally only return pointer
+		// types, since a pointer can be put into the return interface
+		// value without an allocation:
+		return make(DedupeMap, 32)
+	},
 }
 
-// Create a new union-type qualifier with the given name and unique id, which restricts types
-// to the given set of type-constants.
-func NewUnion(kindName string, kindId int, anyOf ...*Const) *Kind {
-	return &Kind{
-		Id:   kindId,
-		Name: kindName,
-		Refine: func(t Type, k *Kind) error {
-			switch link := RealType(t).(type) {
-			case *Var:
-				t.(*Var).MoveKind(link, k)
-				return nil
-			case *Const:
-				for _, c := range anyOf {
-					if link.Name == c.Name {
-						return nil
-					}
-				}
-				return errors.New("invalid " + k.Name + " type: " + link.Name)
-			case nil:
-				return errors.New("invalid " + k.Name + " type: nil")
-			}
-			return errors.New("invalid " + k.Name + " type: " + t.TypeName())
-		},
+type DedupeMap map[string]bool
+
+func NewDedupeMap() DedupeMap { return dedupePool.Get().(DedupeMap) }
+
+func (dm DedupeMap) Release() {
+	for k := range dm {
+		delete(dm, k)
 	}
+	dedupePool.Put(dm)
 }

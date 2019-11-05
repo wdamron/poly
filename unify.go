@@ -25,6 +25,7 @@ package poly
 import (
 	"errors"
 
+	"github.com/wdamron/poly/internal/util"
 	"github.com/wdamron/poly/types"
 )
 
@@ -41,13 +42,16 @@ func (ti *InferenceContext) occursAdjustLevels(id, level int, t types.Type) erro
 				return errors.New("Invalid recursive types")
 			}
 			if t.Level() > level {
+				if ti.speculate {
+					ti.stashLink(t)
+				}
 				t.SetLevel(level)
 			}
 		}
 		return nil
 
 	case *types.App:
-		if err := ti.occursAdjustLevels(id, level, t.Func); err != nil {
+		if err := ti.occursAdjustLevels(id, level, t.Const); err != nil {
 			return err
 		}
 		for _, arg := range t.Args {
@@ -90,6 +94,18 @@ func (ti *InferenceContext) occursAdjustLevels(id, level int, t types.Type) erro
 	}
 }
 
+func (ti *InferenceContext) tryUnify(a, b types.Type) error {
+	speculating := ti.speculate
+	ti.speculate = true
+	stashedLinks := ti.linkStash
+	err := ti.unify(a, b)
+	if err != nil {
+		ti.unstashLinks(len(ti.linkStash) - len(stashedLinks))
+	}
+	ti.speculate, ti.linkStash = speculating, stashedLinks
+	return err
+}
+
 func (ti *InferenceContext) unify(a, b types.Type) error {
 	if a == b {
 		return nil
@@ -100,17 +116,59 @@ func (ti *InferenceContext) unify(a, b types.Type) error {
 		case a.IsLinkVar():
 			return ti.unify(a.Link(), b)
 		case a.IsUnboundVar():
-			if b, ok := b.(*types.Var); ok {
-				if b.IsUnboundVar() && a.Id() == b.Id() {
+			b = types.RealType(b)
+			bv, bIsVar := b.(*types.Var)
+			if bIsVar {
+				if bv.IsUnboundVar() && a.Id() == bv.Id() {
 					return errors.New("Cannot unify pair of unbound type-variables")
 				}
+			}
+			if ti.speculate {
+				ti.stashLink(a)
 			}
 			if err := ti.occursAdjustLevels(a.Id(), a.Level(), b); err != nil {
 				return err
 			}
-			if err := a.SetLink(b); err != nil {
-				return err
+			aConstraints := a.Constraints()
+			if len(aConstraints) != 0 {
+				if bIsVar {
+					// propagate instance constraints to the link target
+					bConstraints := bv.Constraints()
+					if ti.speculate {
+						ti.stashLink(bv)
+						bConstraints2 := make([]types.InstanceConstraint, len(aConstraints)+len(bConstraints))
+						copy(bConstraints2, aConstraints)
+						copy(bConstraints2[len(aConstraints):], bConstraints)
+						bv.SetConstraints(bConstraints2)
+					} else {
+						bv.SetConstraints(append(bConstraints, aConstraints...))
+					}
+					a.SetConstraints(nil)
+				} else {
+					// evaluate instance constraints (find a matching instance for each type-class)
+					seen := util.NewDedupeMap()
+					for _, c := range aConstraints {
+						if seen[c.TypeClass.Name] {
+							continue
+						}
+						seen[c.TypeClass.Name] = true
+						found := c.TypeClass.FindInstance(func(inst *types.Instance) (found bool) {
+							if err := ti.tryUnify(b, ti.instantiate(a.Level(), inst.Param)); err != nil {
+								return false
+							}
+							return true
+						})
+						if !found {
+							seen.Release()
+							return errors.New("No matching instance found for type-class " + c.TypeClass.Name)
+						}
+					}
+					seen.Release()
+				}
+
 			}
+
+			a.SetLink(b)
 			return nil
 		default:
 			return errors.New("Generic type-variable was not generalized or instantiated before unification")
@@ -127,15 +185,15 @@ func (ti *InferenceContext) unify(a, b types.Type) error {
 			if a.Name == b.Name {
 				return nil
 			}
-			return errors.New("Failed to unify Const " + a.Name + " with Const " + b.Name)
+			return errors.New("Failed to unify " + a.Name + " with " + b.Name)
 		}
 
 	case *types.App:
 		b, ok := b.(*types.App)
 		if !ok {
-			return errors.New("Failed to unify function call with type")
+			return errors.New("Failed to unify type-application with " + b.TypeName())
 		}
-		if err := ti.unify(a.Func, b.Func); err != nil {
+		if err := ti.unify(a.Const, b.Const); err != nil {
 			return err
 		}
 		if len(a.Args) != len(b.Args) {
