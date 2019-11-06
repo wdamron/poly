@@ -30,20 +30,26 @@ import (
 )
 
 // TypeEnv is a type-enviroment containing mappings from identifiers to declared types.
+//
+// A type-environment cannot be used concurrently for inference; to share a type-environment
+// across threads, create a new type-environment for each thread which inherits from the
+// shared environment.
 type TypeEnv struct {
 	// Next unused type-variable id
 	NextVarId int
-	// Next unused qualified-type id
-	NextQualifiedTypeId int
-	// Next unused type-matcher id
-	NextMatcherId int
 	// Predeclared types in the parent of the current type-environment
 	Parent *TypeEnv
 	// Mappings from identifiers to declared types in the current type-environment
 	Types map[string]types.Type
+
+	common *commonContext
 }
 
 // Create a type-environment. The new environment will inherit bindings from the parent, if the parent is not nil.
+//
+// A type-environment cannot be used concurrently for inference; to share a type-environment
+// across threads, create a new type-environment for each thread which inherits from the
+// shared environment.
 func NewTypeEnv(parent *TypeEnv) *TypeEnv {
 	env := &TypeEnv{
 		Parent: parent,
@@ -51,8 +57,6 @@ func NewTypeEnv(parent *TypeEnv) *TypeEnv {
 	}
 	if parent != nil {
 		env.NextVarId = parent.NextVarId
-		env.NextQualifiedTypeId = parent.NextQualifiedTypeId
-		env.NextMatcherId = parent.NextMatcherId
 	}
 	return env
 }
@@ -74,7 +78,7 @@ func (e *TypeEnv) NewQualifiedVar(constraints ...types.InstanceConstraint) *type
 }
 
 // Declare a type for an identifier within the type environment.
-func (e *TypeEnv) Add(name string, t types.Type) { e.Types[name] = generalize(-1, t) }
+func (e *TypeEnv) Declare(name string, t types.Type) { e.Types[name] = generalize(-1, t) }
 
 // Remove a declared type for an identifier from the type environment.
 func (e *TypeEnv) Remove(name string) { delete(e.Types, name) }
@@ -91,7 +95,10 @@ func (e *TypeEnv) Lookup(name string) (types.Type, bool) {
 }
 
 // Declare a parameterized type-class within the type environment.
-func (e *TypeEnv) NewTypeClass(name string, param types.Type, methods map[string]*types.Arrow) *types.TypeClass {
+func (e *TypeEnv) DeclareTypeClass(name string, param types.Type, methods map[string]*types.Arrow) (*types.TypeClass, error) {
+	if _, isFunction := param.(*types.Arrow); isFunction {
+		return nil, errors.New("Unsupported function parameter for type-class " + name)
+	}
 	methods2 := make(map[string]*types.Arrow, len(methods))
 	tc := types.NewTypeClass(name, generalize(-1, param), methods2)
 	for name, arrow := range methods {
@@ -99,18 +106,17 @@ func (e *TypeEnv) NewTypeClass(name string, param types.Type, methods map[string
 		methods2[name] = arrow
 		e.Types[name] = &types.Method{TypeClass: tc, Name: name, HasGenericVars: arrow.HasGenericVars}
 	}
-	return tc
+	return tc, nil
 }
 
 // Declare an instance for a parameterized type-class within the type environment. The instance must implement
 // all methods for the type-class and all parents of the type-class. The instance must not overlap with (i.e. unify with)
 // any other instances for the type-class, though this will not be checked.
-func (e *TypeEnv) NewInstance(tc *types.TypeClass, param types.Type, methodImpls map[string]string) (*types.Instance, error) {
-	seen := util.NewDedupeMap()
-	err := e.checkSatisfies(tc, methodImpls, seen)
-	seen.Release()
-	if err != nil {
-		return nil, err
+//
+// methodImpls must map from method names to names of their implementations.
+func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodImpls map[string]string) (*types.Instance, error) {
+	if _, isFunction := param.(*types.Arrow); isFunction {
+		return nil, errors.New("Unsupported function instance for type-class " + tc.Name)
 	}
 	impls := make(map[string]*types.Arrow, len(methodImpls))
 	for name, implName := range methodImpls {
@@ -124,13 +130,40 @@ func (e *TypeEnv) NewInstance(tc *types.TypeClass, param types.Type, methodImpls
 		}
 		impls[name] = arrow
 	}
-	return tc.AddInstance(generalize(-1, param), impls), nil
+	seen := util.NewDedupeMap()
+	if e.common == nil {
+		e.common = &commonContext{}
+		e.common.init()
+	}
+	inst := tc.AddInstance(generalize(-1, param), impls)
+	err := e.checkSatisfies(tc, param, impls, seen)
+	seen.Release()
+	if err != nil {
+		tc.Instances = tc.Instances[:len(tc.Instances)-1]
+		return nil, err
+	}
+	return inst, nil
 }
 
-func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, methodImpls map[string]string, seen map[string]bool) error {
-	for name := range tc.Methods {
-		if _, ok := methodImpls[name]; !ok {
-			return errors.New("Missing method implementation for " + name + " of type-class " + tc.Name)
+func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodImpls map[string]*types.Arrow, seen map[string]bool) error {
+	for name, def := range tc.Methods {
+		impl, ok := methodImpls[name]
+		if !ok || len(def.Args) != len(impl.Args) {
+			return methodErr(tc, param, name, nil)
+		}
+		speculating := e.common.speculate
+		e.common.speculate = true
+		stashedLinks := e.common.linkStash
+		var err error
+		for i, arg := range def.Args {
+			if err = e.common.unify(e.common.instantiate(0, arg), e.common.instantiate(0, impl.Args[i])); err != nil {
+				break
+			}
+		}
+		e.common.unstashLinks(len(e.common.linkStash) - len(stashedLinks))
+		e.common.speculate, e.common.linkStash = speculating, stashedLinks
+		if err != nil {
+			return methodErr(tc, param, name, err)
 		}
 	}
 	seen[tc.Name] = true
@@ -138,9 +171,18 @@ func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, methodImpls map[string]str
 		if seen[super.Name] {
 			continue
 		}
-		if err := e.checkSatisfies(super, methodImpls, seen); err != nil {
+		if err := e.checkSatisfies(super, param, methodImpls, seen); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// TODO: use wrapped errors
+func methodErr(tc *types.TypeClass, param types.Type, method string, err error) error {
+	str := "type " + types.TypeString(param) + " does not implement method " + method + " of type-class " + tc.Name
+	if err != nil {
+		str += " -- " + err.Error()
+	}
+	return errors.New(str)
 }

@@ -32,7 +32,7 @@ func CopyExpr(e Expr) Expr {
 		for i, arg := range e.Args {
 			args[i] = CopyExpr(arg)
 		}
-		return &Call{CopyExpr(e.Func), args, e.inferred}
+		return &Call{CopyExpr(e.Func), args, e.inferred, e.inferredFunc}
 
 	case *Func:
 		return &Func{e.ArgNames, CopyExpr(e.Body), e.inferred}

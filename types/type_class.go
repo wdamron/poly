@@ -84,9 +84,6 @@ func (tc *TypeClass) AddInstance(param Type, methods map[string]*Arrow) *Instanc
 func (tc *TypeClass) FindInstance(found func(*Instance) bool) bool {
 	seen := util.NewDedupeMap()
 	ok, _ := tc.findInstance(seen, found)
-	for k := range seen {
-		delete(seen, k)
-	}
 	seen.Release()
 	return ok
 }

@@ -33,16 +33,16 @@ func TestRecursiveLet(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	env.Add("add", &types.Arrow{
+	env.Declare("add", &types.Arrow{
 		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
 		Return: &types.Const{"int"},
 	})
 	A := env.NewGenericVar()
-	env.Add("if", &types.Arrow{
+	env.Declare("if", &types.Arrow{
 		Args:   []types.Type{&types.Const{"bool"}, A, A},
 		Return: A,
 	})
-	env.Add("newbool", &types.Arrow{Return: &types.Const{"bool"}})
+	env.Declare("newbool", &types.Arrow{Return: &types.Const{"bool"}})
 
 	expr := &ast.Func{
 		ArgNames: []string{"x"},
@@ -104,12 +104,12 @@ func TestVariantMatch(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	env.Add("add", &types.Arrow{
+	env.Declare("add", &types.Arrow{
 		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
 		Return: &types.Const{"int"},
 	})
-	env.Add("newint", &types.Arrow{Return: &types.Const{"int"}})
-	env.Add("newbool", &types.Arrow{Return: &types.Const{"bool"}})
+	env.Declare("newint", &types.Arrow{Return: &types.Const{"int"}})
+	env.Declare("newbool", &types.Arrow{Return: &types.Const{"bool"}})
 
 	fnExpr := &ast.Func{
 		ArgNames: []string{"x", "y"},
@@ -177,91 +177,107 @@ func TestConstraints(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
+	// type hierarchy
+
 	intType := &types.Const{"int"}
 	shortType := &types.Const{"short"}
 	floatType := &types.Const{"float"}
 	boolType := &types.Const{"bool"}
 
-	Addt := env.NewGenericVar()
-	Add := env.NewTypeClass("Add", Addt, map[string]*types.Arrow{
+	adderType := env.NewGenericVar()
+	Add, err := env.DeclareTypeClass("Add", adderType, map[string]*types.Arrow{
 		"+": &types.Arrow{
-			Args:   []types.Type{Addt, Addt},
-			Return: Addt,
+			Args:   []types.Type{adderType, adderType},
+			Return: adderType,
 		},
 	})
-	Addt.AddConstraint(Add)
+	if err != nil {
+		t.Fatal(err)
+	}
+	adderType.AddConstraint(Add)
 
 	Intt := env.NewGenericVar()
-	Int := env.NewTypeClass("Int", Intt, map[string]*types.Arrow{
+	Int, err := env.DeclareTypeClass("Int", Intt, map[string]*types.Arrow{
 		"&": &types.Arrow{
 			Args:   []types.Type{Intt, Intt},
 			Return: Intt,
 		},
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	Intt.AddConstraint(Int)
 
 	Add.AddSubClass(Int)
 
-	addVecType := &types.App{
-		Const:          &types.Const{"vec"},
-		Args:           []types.Type{Addt},
-		HasGenericVars: Addt.IsGeneric(),
+	// Reusing the existing type-variable would lead to a recursive-type error
+	adderType2 := env.NewGenericVar()
+	adderType2.AddConstraint(Add)
+	adderVecType := &types.App{
+		Const: &types.Const{"vec"},
+		Args:  []types.Type{adderType2},
 	}
 
-	env.Add("int_add", &types.Arrow{
+	env.Declare("int_add", &types.Arrow{
 		Args:   []types.Type{intType, intType},
 		Return: intType,
 	})
-	env.Add("int_and", &types.Arrow{
+	env.Declare("int_and", &types.Arrow{
 		Args:   []types.Type{intType, intType},
 		Return: intType,
 	})
-	env.Add("short_add", &types.Arrow{
+	env.Declare("short_add", &types.Arrow{
 		Args:   []types.Type{shortType, shortType},
 		Return: shortType,
 	})
-	env.Add("short_and", &types.Arrow{
+	env.Declare("short_and", &types.Arrow{
 		Args:   []types.Type{shortType, shortType},
 		Return: shortType,
 	})
-	env.Add("float_add", &types.Arrow{
+	env.Declare("float_add", &types.Arrow{
 		Args:   []types.Type{floatType, floatType},
 		Return: floatType,
 	})
-	env.Add("vec_add", &types.Arrow{
-		Args:   []types.Type{addVecType, addVecType},
-		Return: addVecType,
+	env.Declare("vec_add", &types.Arrow{
+		Args:   []types.Type{adderVecType, adderVecType},
+		Return: adderVecType,
+	})
+	env.Declare("bad_bool_add", &types.Arrow{
+		Args:   []types.Type{boolType, intType},
+		Return: boolType,
 	})
 
-	if _, err := env.NewInstance(Int, intType, map[string]string{"+": "int_add", "&": "int_and"}); err != nil {
+	if _, err := env.DeclareInstance(Int, intType, map[string]string{"+": "int_add", "&": "int_and"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := env.NewInstance(Int, shortType, map[string]string{"+": "short_add", "&": "short_and"}); err != nil {
+	if _, err := env.DeclareInstance(Int, shortType, map[string]string{"+": "short_add", "&": "short_and"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := env.NewInstance(Add, floatType, map[string]string{"+": "float_add"}); err != nil {
+	if _, err := env.DeclareInstance(Add, floatType, map[string]string{"+": "float_add"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := env.NewInstance(Add, addVecType, map[string]string{"+": "vec_add"}); err != nil {
+	if _, err := env.DeclareInstance(Add, adderVecType, map[string]string{"+": "vec_add"}); err != nil {
 		t.Fatal(err)
 	}
 
-	env.Add("somebool", boolType)
-	env.Add("someint", intType)
-	env.Add("someshort", shortType)
-	env.Add("somefloat", floatType)
-	env.Add("someintvec", &types.App{
+	env.Declare("somebool", boolType)
+	env.Declare("someint", intType)
+	env.Declare("someshort", shortType)
+	env.Declare("somefloat", floatType)
+	env.Declare("someintvec", &types.App{
 		Const: &types.Const{"vec"},
 		Args:  []types.Type{intType},
 	})
-	env.Add("somefloatvec", &types.App{
+	env.Declare("somefloatvec", &types.App{
 		Const: &types.Const{"vec"},
 		Args:  []types.Type{floatType},
 	})
-	env.Add("someboolvec", &types.App{
+	env.Declare("someboolvec", &types.App{
 		Const: &types.Const{"vec"},
 		Args:  []types.Type{boolType},
 	})
+
+	// method/instance inference
 
 	var addWrapper ast.Expr = &ast.Func{
 		ArgNames: []string{"x", "y"},
@@ -280,7 +296,7 @@ func TestConstraints(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 
-	expr := &ast.Call{
+	var expr ast.Expr = &ast.Call{
 		Func: addWrapper,
 		Args: []ast.Expr{&ast.Var{Name: "someint"}, &ast.Var{Name: "someint"}},
 	}
@@ -410,22 +426,64 @@ func TestConstraints(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected constraint error")
 	}
+
+	addWrapper = &ast.Func{
+		ArgNames: []string{"x"},
+		Body: &ast.Call{
+			Func: &ast.Var{Name: "+"},
+			Args: []ast.Expr{&ast.Var{Name: "x"}, &ast.Var{Name: "someint"}},
+		},
+	}
+	ty, err = ctx.Infer(addWrapper, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeString = types.TypeString(ty)
+	if typeString != "int -> int" {
+		t.Fatalf("expected int -> int, found %s", typeString)
+	}
+
+	// annotation
+
+	call := &ast.Call{
+		Func: &ast.Var{Name: "+"},
+		Args: []ast.Expr{&ast.Var{Name: "someint"}, &ast.Var{Name: "someint"}},
+	}
+	if err = ctx.AnnotateDirect(call, env); err != nil {
+		t.Fatal(err)
+	}
+	if tt, ok := call.Type().(*types.Const); !ok || tt.Name != "int" {
+		t.Fatalf("expected int return, found " + tt.Name)
+	}
+	method, isMethod := call.FuncType().(*types.Method)
+	if !isMethod || method == nil || method.Name != "+" || method.TypeClass != Add {
+		t.Fatalf("no method annotated on call or method = %#+v", call.FuncType())
+	}
+
+	// instance validation
+
+	if _, err := env.DeclareInstance(Int, boolType, map[string]string{"&": "bool_and"}); err == nil {
+		t.Fatalf("expected missing-method error")
+	}
+	if _, err := env.DeclareInstance(Add, boolType, map[string]string{"+": "bad_bool_add"}); err == nil {
+		t.Fatalf("expected invalid-method error")
+	}
 }
 
 func TestMutuallyRecursiveLet(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	env.Add("add", &types.Arrow{
+	env.Declare("add", &types.Arrow{
 		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
 		Return: &types.Const{"int"},
 	})
 	A := env.NewGenericVar()
-	env.Add("if", &types.Arrow{
+	env.Declare("if", &types.Arrow{
 		Args:   []types.Type{&types.Const{"bool"}, A, A},
 		Return: A,
 	})
-	env.Add("newbool", &types.Arrow{Return: &types.Const{"bool"}})
+	env.Declare("newbool", &types.Arrow{Return: &types.Const{"bool"}})
 
 	newbool := &ast.Call{Func: &ast.Var{Name: "newbool"}}
 	f := &ast.Var{Name: "f"}

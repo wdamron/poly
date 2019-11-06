@@ -29,12 +29,12 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-func (ti *InferenceContext) occursAdjustLevels(id, level int, t types.Type) error {
+func (ctx *commonContext) occursAdjustLevels(id, level int, t types.Type) error {
 	switch t := t.(type) {
 	case *types.Var:
 		switch {
 		case t.IsLinkVar():
-			return ti.occursAdjustLevels(id, level, t.Link())
+			return ctx.occursAdjustLevels(id, level, t.Link())
 		case t.IsGenericVar():
 			return errors.New("Invalid occurrance check within generic type-variable")
 		case t.IsUnboundVar():
@@ -42,8 +42,8 @@ func (ti *InferenceContext) occursAdjustLevels(id, level int, t types.Type) erro
 				return errors.New("Invalid recursive types")
 			}
 			if t.Level() > level {
-				if ti.speculate {
-					ti.stashLink(t)
+				if ctx.speculate {
+					ctx.stashLink(t)
 				}
 				t.SetLevel(level)
 			}
@@ -51,11 +51,11 @@ func (ti *InferenceContext) occursAdjustLevels(id, level int, t types.Type) erro
 		return nil
 
 	case *types.App:
-		if err := ti.occursAdjustLevels(id, level, t.Const); err != nil {
+		if err := ctx.occursAdjustLevels(id, level, t.Const); err != nil {
 			return err
 		}
 		for _, arg := range t.Args {
-			if err := ti.occursAdjustLevels(id, level, arg); err != nil {
+			if err := ctx.occursAdjustLevels(id, level, arg); err != nil {
 				return err
 			}
 		}
@@ -63,23 +63,23 @@ func (ti *InferenceContext) occursAdjustLevels(id, level int, t types.Type) erro
 
 	case *types.Arrow:
 		for _, arg := range t.Args {
-			if err := ti.occursAdjustLevels(id, level, arg); err != nil {
+			if err := ctx.occursAdjustLevels(id, level, arg); err != nil {
 				return err
 			}
 		}
-		return ti.occursAdjustLevels(id, level, t.Return)
+		return ctx.occursAdjustLevels(id, level, t.Return)
 
 	case *types.Record:
-		return ti.occursAdjustLevels(id, level, t.Row)
+		return ctx.occursAdjustLevels(id, level, t.Row)
 
 	case *types.Variant:
-		return ti.occursAdjustLevels(id, level, t.Row)
+		return ctx.occursAdjustLevels(id, level, t.Row)
 
 	case *types.RowExtend:
 		var err error
 		t.Labels.Range(func(label string, ts types.TypeList) bool {
 			ts.Range(func(i int, t types.Type) bool {
-				err = ti.occursAdjustLevels(id, level, t)
+				err = ctx.occursAdjustLevels(id, level, t)
 				return err == nil
 			})
 			return err == nil
@@ -87,26 +87,26 @@ func (ti *InferenceContext) occursAdjustLevels(id, level int, t types.Type) erro
 		if err != nil {
 			return err
 		}
-		return ti.occursAdjustLevels(id, level, t.Row)
+		return ctx.occursAdjustLevels(id, level, t.Row)
 
 	default:
 		return nil
 	}
 }
 
-func (ti *InferenceContext) tryUnify(a, b types.Type) error {
-	speculating := ti.speculate
-	ti.speculate = true
-	stashedLinks := ti.linkStash
-	err := ti.unify(a, b)
+func (ctx *commonContext) tryUnify(a, b types.Type) error {
+	speculating := ctx.speculate
+	ctx.speculate = true
+	stashedLinks := ctx.linkStash
+	err := ctx.unify(a, b)
 	if err != nil {
-		ti.unstashLinks(len(ti.linkStash) - len(stashedLinks))
+		ctx.unstashLinks(len(ctx.linkStash) - len(stashedLinks))
 	}
-	ti.speculate, ti.linkStash = speculating, stashedLinks
+	ctx.speculate, ctx.linkStash = speculating, stashedLinks
 	return err
 }
 
-func (ti *InferenceContext) unify(a, b types.Type) error {
+func (ctx *commonContext) unify(a, b types.Type) error {
 	if a == b {
 		return nil
 	}
@@ -114,7 +114,7 @@ func (ti *InferenceContext) unify(a, b types.Type) error {
 	if a, ok := a.(*types.Var); ok {
 		switch {
 		case a.IsLinkVar():
-			return ti.unify(a.Link(), b)
+			return ctx.unify(a.Link(), b)
 		case a.IsUnboundVar():
 			b = types.RealType(b)
 			bv, bIsVar := b.(*types.Var)
@@ -123,19 +123,19 @@ func (ti *InferenceContext) unify(a, b types.Type) error {
 					return errors.New("Cannot unify pair of unbound type-variables")
 				}
 			}
-			if ti.speculate {
-				ti.stashLink(a)
+			if ctx.speculate {
+				ctx.stashLink(a)
 			}
-			if err := ti.occursAdjustLevels(a.Id(), a.Level(), b); err != nil {
+			if err := ctx.occursAdjustLevels(a.Id(), a.Level(), b); err != nil {
 				return err
 			}
 			aConstraints := a.Constraints()
 			if len(aConstraints) != 0 {
 				if bIsVar {
-					// propagate instance constraints to the link target
 					bConstraints := bv.Constraints()
-					if ti.speculate {
-						ti.stashLink(bv)
+					// propagate instance constraints to the link target
+					if ctx.speculate {
+						ctx.stashLink(bv)
 						bConstraints2 := make([]types.InstanceConstraint, len(aConstraints)+len(bConstraints))
 						copy(bConstraints2, aConstraints)
 						copy(bConstraints2[len(aConstraints):], bConstraints)
@@ -153,7 +153,7 @@ func (ti *InferenceContext) unify(a, b types.Type) error {
 						}
 						seen[c.TypeClass.Name] = true
 						found := c.TypeClass.FindInstance(func(inst *types.Instance) (found bool) {
-							if err := ti.tryUnify(b, ti.instantiate(a.Level(), inst.Param)); err != nil {
+							if err := ctx.tryUnify(b, ctx.instantiate(a.Level(), inst.Param)); err != nil {
 								return false
 							}
 							return true
@@ -176,7 +176,7 @@ func (ti *InferenceContext) unify(a, b types.Type) error {
 	}
 
 	if b, ok := b.(*types.Var); ok {
-		return ti.unify(b, a)
+		return ctx.unify(b, a)
 	}
 
 	switch a := a.(type) {
@@ -193,14 +193,14 @@ func (ti *InferenceContext) unify(a, b types.Type) error {
 		if !ok {
 			return errors.New("Failed to unify type-application with " + b.TypeName())
 		}
-		if err := ti.unify(a.Const, b.Const); err != nil {
+		if err := ctx.unify(a.Const, b.Const); err != nil {
 			return err
 		}
 		if len(a.Args) != len(b.Args) {
 			return errors.New("Cannot unify function calls with differing arity")
 		}
 		for i := range a.Args {
-			if err := ti.unify(a.Args[i], b.Args[i]); err != nil {
+			if err := ctx.unify(a.Args[i], b.Args[i]); err != nil {
 				return err
 			}
 		}
@@ -215,28 +215,28 @@ func (ti *InferenceContext) unify(a, b types.Type) error {
 			return errors.New("Cannot unify arrows with differing arity")
 		}
 		for i := range a.Args {
-			if err := ti.unify(a.Args[i], b.Args[i]); err != nil {
+			if err := ctx.unify(a.Args[i], b.Args[i]); err != nil {
 				return err
 			}
 		}
-		if err := ti.unify(a.Return, b.Return); err != nil {
+		if err := ctx.unify(a.Return, b.Return); err != nil {
 			return err
 		}
 		return nil
 
 	case *types.Record:
 		if b, ok := b.(*types.Record); ok {
-			return ti.unify(a.Row, b.Row)
+			return ctx.unify(a.Row, b.Row)
 		}
 
 	case *types.Variant:
 		if b, ok := b.(*types.Variant); ok {
-			return ti.unify(a.Row, b.Row)
+			return ctx.unify(a.Row, b.Row)
 		}
 
 	case *types.RowExtend:
 		if b, ok := b.(*types.RowExtend); ok {
-			return ti.unifyRows(a, b)
+			return ctx.unifyRows(a, b)
 		}
 
 	case *types.RowEmpty:
@@ -247,7 +247,7 @@ func (ti *InferenceContext) unify(a, b types.Type) error {
 	return errors.New("Failed to unify " + a.TypeName() + " with " + b.TypeName())
 }
 
-func (ti *InferenceContext) unifyLists(a, b types.TypeList) (xa, xb types.TypeList, err error) {
+func (ctx *commonContext) unifyLists(a, b types.TypeList) (xa, xb types.TypeList, err error) {
 	i := 0
 	n := a.Len()
 	if b.Len() < n {
@@ -255,7 +255,7 @@ func (ti *InferenceContext) unifyLists(a, b types.TypeList) (xa, xb types.TypeLi
 	}
 	for i < n {
 		va, vb := a.Get(i), b.Get(i)
-		if err := ti.unify(va, vb); err != nil {
+		if err := ctx.unify(va, vb); err != nil {
 			return types.EmptyTypeList, types.EmptyTypeList, err
 		}
 		i++
@@ -263,7 +263,7 @@ func (ti *InferenceContext) unifyLists(a, b types.TypeList) (xa, xb types.TypeLi
 	return a.Slice(i, a.Len()), b.Slice(i, b.Len()), nil
 }
 
-func (ti *InferenceContext) unifyRows(a, b types.Type) error {
+func (ctx *commonContext) unifyRows(a, b types.Type) error {
 	ma, ra, err := types.FlattenRowType(a)
 	if err != nil {
 		return err
@@ -303,7 +303,7 @@ UnifyLabels:
 			xb.Set(la, va)
 			ia.Next()
 		default:
-			ua, ub, err := ti.unifyLists(va, vb)
+			ua, ub, err := ctx.unifyLists(va, vb)
 			if err != nil {
 				return err
 			}
@@ -321,28 +321,28 @@ UnifyLabels:
 	za, zb := xa.Len() == 0, xb.Len() == 0
 	switch {
 	case za && zb:
-		return ti.unify(ra, rb)
+		return ctx.unify(ra, rb)
 	case za && !zb:
-		return ti.unify(rb, &types.RowExtend{Row: ra, Labels: xb.Build()})
+		return ctx.unify(rb, &types.RowExtend{Row: ra, Labels: xb.Build()})
 	case !za && zb:
-		return ti.unify(ra, &types.RowExtend{Row: rb, Labels: xa.Build()})
+		return ctx.unify(ra, &types.RowExtend{Row: rb, Labels: xa.Build()})
 	default:
 		switch ra := ra.(type) {
 		case *types.RowEmpty:
 			// will result in an error:
-			return ti.unify(ra, &types.RowExtend{Row: ti.varTracker.New(0), Labels: xa.Build()})
+			return ctx.unify(ra, &types.RowExtend{Row: ctx.varTracker.New(0), Labels: xa.Build()})
 		case *types.Var:
 			if !ra.IsUnboundVar() {
 				return errors.New("Invalid state while unifying type-variables for rows")
 			}
-			tv := ti.varTracker.New(ra.Level())
-			if err := ti.unify(rb, &types.RowExtend{Row: tv, Labels: xb.Build()}); err != nil {
+			tv := ctx.varTracker.New(ra.Level())
+			if err := ctx.unify(rb, &types.RowExtend{Row: tv, Labels: xb.Build()}); err != nil {
 				return err
 			}
 			if ra.IsLinkVar() {
 				return errors.New("Invalid recursive row-types")
 			}
-			return ti.unify(ra, &types.RowExtend{Row: tv, Labels: xa.Build()})
+			return ctx.unify(ra, &types.RowExtend{Row: tv, Labels: xa.Build()})
 		}
 	}
 

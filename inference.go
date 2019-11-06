@@ -45,26 +45,6 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-// InferenceContext is a re-usable context for type inference.
-type InferenceContext struct {
-	varTracker  typeutil.VarTracker
-	envStash    []stashedType      // shadowed variables
-	linkStash   []stashedLink      // stashed type-variables (during speculative unification)
-	instLookup  map[int]*types.Var // instantiation lookup for generic type-variables
-	speculate   bool
-	err         error
-	invalid     ast.Expr
-	rootExpr    ast.Expr
-	analysis    analysis
-	initialized bool
-	analyzed    bool
-	needsReset  bool
-	annotate    bool
-
-	// initial space:
-	_envStash [32]stashedType
-}
-
 type stashedType struct {
 	Name string
 	Type types.Type
@@ -77,12 +57,121 @@ type stashedLink struct {
 
 func (l *stashedLink) restore() { *l.v = l.prev }
 
+type commonContext struct {
+	varTracker typeutil.VarTracker
+	envStash   []stashedType      // shadowed variables
+	linkStash  []stashedLink      // stashed type-variables (during speculative unification)
+	instLookup map[int]*types.Var // instantiation lookup for generic type-variables
+	speculate  bool
+
+	// initial space:
+	_envStash  [32]stashedType
+	_linkStash [32]stashedLink
+}
+
+func (ctx *commonContext) init() {
+	ctx.envStash, ctx.linkStash, ctx.instLookup = ctx._envStash[:0], ctx._linkStash[:0], make(map[int]*types.Var, 16)
+}
+
+func (ctx *commonContext) reset() {
+	ctx.varTracker.Reset()
+	for i := range ctx._envStash {
+		ctx._envStash[i] = stashedType{}
+	}
+	ctx.envStash, ctx.linkStash = ctx._envStash[:0], ctx._linkStash[:0]
+	ctx.clearInstantiationLookup()
+}
+
+func (ctx *commonContext) clearInstantiationLookup() {
+	for k := range ctx.instLookup {
+		delete(ctx.instLookup, k)
+	}
+}
+
+// returns 1 if the variable was stashed, otherwise 0
+func (ctx *commonContext) stash(env *TypeEnv, name string) int {
+	if existing, exists := env.Types[name]; exists {
+		ctx.envStash = append(ctx.envStash, stashedType{name, existing})
+		return 1
+	}
+	return 0
+}
+
+func (ctx *commonContext) unstash(env *TypeEnv, count int) {
+	if count <= 0 {
+		return
+	}
+	stash := ctx.envStash
+	unstashed := 0
+	for i := len(stash) - 1; unstashed < count && i >= 0; i, unstashed = i-1, unstashed+1 {
+		env.Types[stash[i].Name] = stash[i].Type
+	}
+	ctx.envStash = ctx.envStash[0 : len(stash)-unstashed]
+}
+
+func (ctx *commonContext) stashLink(v *types.Var) {
+	ctx.linkStash = append(ctx.linkStash, stashedLink{v, *v})
+}
+
+func (ctx *commonContext) unstashLinks(count int) {
+	if count <= 0 {
+		return
+	}
+	stash := ctx.linkStash
+	for i := len(stash) - 1; i > len(stash)-1-count; i-- {
+		*stash[i].v = stash[i].prev
+	}
+}
+
+// InferenceContext is a re-usable context for type inference.
+type InferenceContext struct {
+	common      commonContext
+	err         error
+	invalid     ast.Expr
+	rootExpr    ast.Expr
+	analysis    analysis
+	initialized bool
+	analyzed    bool
+	needsReset  bool
+	annotate    bool
+}
+
 // Create a new type-inference context. A context may be re-used across calls of ExprType.
 func NewContext() *InferenceContext {
 	ti := &InferenceContext{}
 	ti.init()
 	return ti
 }
+
+func (ti *InferenceContext) init() {
+	ti.analysis.init()
+	ti.common.init()
+	ti.initialized = true
+}
+
+func (ti *InferenceContext) reset() {
+	if ti.analyzed {
+		ti.analysis.reset()
+		ti.analyzed = false
+	}
+	ti.common.reset()
+	ti.rootExpr, ti.err, ti.invalid, ti.needsReset =
+		nil, nil, nil, false
+}
+
+// Reset the state of the context. The context will be reset automatically between calls of ExprType.
+func (ti *InferenceContext) Reset() {
+	if !ti.needsReset {
+		return
+	}
+	ti.reset()
+}
+
+// Get the error which caused inference to fail.
+func (ti *InferenceContext) Error() error { return ti.err }
+
+// Get the expression which caused inference to fail.
+func (ti *InferenceContext) InvalidExpr() ast.Expr { return ti.invalid }
 
 // Infer the type of expr within env.
 func (ti *InferenceContext) Infer(expr ast.Expr, env *TypeEnv) (types.Type, error) {
@@ -110,40 +199,6 @@ func (ti *InferenceContext) AnnotateDirect(expr ast.Expr, env *TypeEnv) error {
 	return err
 }
 
-// Get the error which caused inference to fail.
-func (ti *InferenceContext) Error() error { return ti.err }
-
-// Get the expression which caused inference to fail.
-func (ti *InferenceContext) InvalidExpr() ast.Expr { return ti.invalid }
-
-// Reset the state of the context. The context will be reset automatically between calls of ExprType.
-func (ti *InferenceContext) Reset() {
-	if !ti.needsReset {
-		return
-	}
-	ti.reset()
-}
-
-func (ti *InferenceContext) init() {
-	ti.analysis.init()
-	ti.envStash, ti.instLookup, ti.initialized =
-		ti._envStash[:0], make(map[int]*types.Var, 16), true
-}
-
-func (ti *InferenceContext) reset() {
-	ti.clearInstLookup()
-	if ti.analyzed {
-		ti.analysis.reset()
-		ti.analyzed = false
-	}
-	for i := range ti._envStash {
-		ti._envStash[i] = stashedType{}
-	}
-	ti.varTracker.Reset()
-	ti.rootExpr, ti.err, ti.invalid, ti.envStash, ti.needsReset =
-		nil, nil, nil, ti._envStash[:0], false
-}
-
 func (ti *InferenceContext) inferRoot(root ast.Expr, env *TypeEnv, nocopy bool) (ast.Expr, types.Type, error) {
 	if root == nil {
 		return nil, nil, errors.New("Empty expression")
@@ -157,54 +212,13 @@ func (ti *InferenceContext) inferRoot(root ast.Expr, env *TypeEnv, nocopy bool) 
 	} else if !ti.initialized {
 		ti.init()
 	}
-	ti.rootExpr, ti.varTracker.NextId = root, env.NextVarId
+	ti.rootExpr, ti.common.varTracker.NextId = root, env.NextVarId
 	t, err := ti.infer(env, 0, root)
-	ti.needsReset, ti.rootExpr = true, nil
+	ti.needsReset, ti.rootExpr, env.NextVarId = true, nil, ti.common.varTracker.NextId
 	if err != nil {
 		return root, t, err
 	}
 	t = generalize(-1, t)
-	ti.varTracker.FlattenLinks()
+	ti.common.varTracker.FlattenLinks()
 	return root, t, nil
-}
-
-func (ti *InferenceContext) clearInstLookup() {
-	for id := range ti.instLookup {
-		delete(ti.instLookup, id)
-	}
-}
-
-// returns 1 if the variable was stashed, otherwise 0
-func (ti *InferenceContext) stash(env *TypeEnv, name string) int {
-	if existing, exists := env.Types[name]; exists {
-		ti.envStash = append(ti.envStash, stashedType{name, existing})
-		return 1
-	}
-	return 0
-}
-
-func (ti *InferenceContext) unstash(env *TypeEnv, count int) {
-	if count <= 0 {
-		return
-	}
-	stash := ti.envStash
-	unstashed := 0
-	for i := len(stash) - 1; unstashed < count && i >= 0; i, unstashed = i-1, unstashed+1 {
-		env.Types[stash[i].Name] = stash[i].Type
-	}
-	ti.envStash = ti.envStash[0 : len(stash)-unstashed]
-}
-
-func (ti *InferenceContext) stashLink(v *types.Var) {
-	ti.linkStash = append(ti.linkStash, stashedLink{v, *v})
-}
-
-func (ti *InferenceContext) unstashLinks(count int) {
-	if count <= 0 {
-		return
-	}
-	stash := ti.linkStash
-	for i := len(stash) - 1; i > len(stash)-1-count; i-- {
-		*stash[i].v = stash[i].prev
-	}
 }

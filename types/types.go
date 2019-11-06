@@ -32,16 +32,34 @@ type Type interface {
 	IsGeneric() bool
 }
 
-func (t *Var) TypeName() string       { return "Var" }
-func (t *Const) TypeName() string     { return t.Name }
-func (t *App) TypeName() string       { return "App" }
-func (t *Arrow) TypeName() string     { return "Arrow" }
-func (t *Method) TypeName() string    { return "Method" }
-func (t *Record) TypeName() string    { return "Record" }
-func (t *Variant) TypeName() string   { return "Variant" }
-func (t *RowExtend) TypeName() string { return "RowExtend" }
-func (t *RowEmpty) TypeName() string  { return "RowEmpty" }
+// "Var"
+func (t *Var) TypeName() string { return "Var" }
 
+// Name of the type-constant
+func (t *Const) TypeName() string { return t.Name }
+
+// "App"
+func (t *App) TypeName() string { return "App" }
+
+// "Arrow"
+func (t *Arrow) TypeName() string { return "Arrow" }
+
+// "Method"
+func (t *Method) TypeName() string { return "Method" }
+
+// "Record"
+func (t *Record) TypeName() string { return "Record" }
+
+// "Variant"
+func (t *Variant) TypeName() string { return "Variant" }
+
+// "RowExtend"
+func (t *RowExtend) TypeName() string { return "RowExtend" }
+
+// "RowEmpty"
+func (t *RowEmpty) TypeName() string { return "RowEmpty" }
+
+// Check if t is a generic type-variable.
 func (t *Var) IsGeneric() bool {
 	r := RealType(t)
 	if tv, ok := r.(*Var); ok {
@@ -49,14 +67,30 @@ func (t *Var) IsGeneric() bool {
 	}
 	return r.IsGeneric()
 }
-func (t *Const) IsGeneric() bool     { return false }
-func (t *App) IsGeneric() bool       { return t.HasGenericVars }
-func (t *Arrow) IsGeneric() bool     { return t.HasGenericVars }
-func (t *Method) IsGeneric() bool    { return t.TypeClass.Methods[t.Name].HasGenericVars }
-func (t *Record) IsGeneric() bool    { return t.HasGenericVars }
-func (t *Variant) IsGeneric() bool   { return t.HasGenericVars }
+
+// Const is never generic.
+func (t *Const) IsGeneric() bool { return false }
+
+// Check if t contains any generic types.
+func (t *App) IsGeneric() bool { return t.HasGenericVars }
+
+// Check if t contains any generic types.
+func (t *Arrow) IsGeneric() bool { return t.HasGenericVars }
+
+// Check if t contains any generic types.
+func (t *Method) IsGeneric() bool { return t.TypeClass.Methods[t.Name].HasGenericVars }
+
+// Check if t contains any generic types.
+func (t *Record) IsGeneric() bool { return t.HasGenericVars }
+
+// Check if t contains any generic types.
+func (t *Variant) IsGeneric() bool { return t.HasGenericVars }
+
+// Check if t contains any generic types.
 func (t *RowExtend) IsGeneric() bool { return t.HasGenericVars }
-func (t *RowEmpty) IsGeneric() bool  { return false }
+
+// RowEmpty is never generic.
+func (t *RowEmpty) IsGeneric() bool { return false }
 
 // Type constant: `int` or `bool`
 type Const struct {
@@ -72,8 +106,10 @@ type App struct {
 
 // Function type: `(int, int) -> int`
 type Arrow struct {
-	Args           []Type
-	Return         Type
+	Args   []Type
+	Return Type
+	// Method which the function instantiates, or nil
+	Method         *Method
 	HasGenericVars bool
 }
 
