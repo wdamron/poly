@@ -63,7 +63,8 @@ type VarTracker struct {
 
 func (vt *VarTracker) List() VarList { return VarList{length: vt.count, list: vt.head} }
 
-func (vt *VarTracker) Reset() { vt.NextId, vt.count, vt.head, vt.block = 0, 0, nil, nil }
+func (vt *VarTracker) Reset()       { vt.NextId, vt.count, vt.head, vt.block = 0, 0, nil, nil }
+func (vt *VarTracker) ResetKeepId() { vt.count, vt.head, vt.block = 0, nil, nil }
 
 func (vt *VarTracker) FlattenLinks() {
 	for nd := vt.head; nd != nil; nd = nd.tail {

@@ -184,68 +184,38 @@ func TestConstraints(t *testing.T) {
 	floatType := &types.Const{"float"}
 	boolType := &types.Const{"bool"}
 
-	adderType := env.NewGenericVar()
-	Add, err := env.DeclareTypeClass("Add", adderType, map[string]*types.Arrow{
-		"+": &types.Arrow{
-			Args:   []types.Type{adderType, adderType},
-			Return: adderType,
-		},
+	Add, err := env.DeclareTypeClass("Add", func(param *types.Var) types.MethodSet {
+		return types.MethodSet{
+			"+": &types.Arrow{Args: []types.Type{param, param}, Return: param},
+		}
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	adderType.AddConstraint(Add)
-
-	Intt := env.NewGenericVar()
-	Int, err := env.DeclareTypeClass("Int", Intt, map[string]*types.Arrow{
-		"&": &types.Arrow{
-			Args:   []types.Type{Intt, Intt},
-			Return: Intt,
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	Intt.AddConstraint(Int)
-
-	Add.AddSubClass(Int)
-
-	// Reusing the existing type-variable would lead to a recursive-type error
-	adderType2 := env.NewGenericVar()
-	adderType2.AddConstraint(Add)
 	adderVecType := &types.App{
 		Const: &types.Const{"vec"},
-		Args:  []types.Type{adderType2},
+		Args:  []types.Type{env.NewQualifiedVar(types.InstanceConstraint{Add})},
+	}
+	if types.TypeString(adderVecType) != "Add 'a => vec['a]" {
+		t.Fatalf("invalid vec string: %s", types.TypeString(adderVecType))
 	}
 
-	env.Declare("int_add", &types.Arrow{
-		Args:   []types.Type{intType, intType},
-		Return: intType,
-	})
-	env.Declare("int_and", &types.Arrow{
-		Args:   []types.Type{intType, intType},
-		Return: intType,
-	})
-	env.Declare("short_add", &types.Arrow{
-		Args:   []types.Type{shortType, shortType},
-		Return: shortType,
-	})
-	env.Declare("short_and", &types.Arrow{
-		Args:   []types.Type{shortType, shortType},
-		Return: shortType,
-	})
-	env.Declare("float_add", &types.Arrow{
-		Args:   []types.Type{floatType, floatType},
-		Return: floatType,
-	})
-	env.Declare("vec_add", &types.Arrow{
-		Args:   []types.Type{adderVecType, adderVecType},
-		Return: adderVecType,
-	})
-	env.Declare("bad_bool_add", &types.Arrow{
-		Args:   []types.Type{boolType, intType},
-		Return: boolType,
-	})
+	Int, err := env.DeclareTypeClass("Int", func(param *types.Var) types.MethodSet {
+		return types.MethodSet{
+			"&": &types.Arrow{Args: []types.Type{param, param}, Return: param},
+		}
+	}, Add) // implements/subsumes Add
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env.Declare("int_add", &types.Arrow{Args: []types.Type{intType, intType}, Return: intType})
+	env.Declare("int_and", &types.Arrow{Args: []types.Type{intType, intType}, Return: intType})
+	env.Declare("short_add", &types.Arrow{Args: []types.Type{shortType, shortType}, Return: shortType})
+	env.Declare("short_and", &types.Arrow{Args: []types.Type{shortType, shortType}, Return: shortType})
+	env.Declare("float_add", &types.Arrow{Args: []types.Type{floatType, floatType}, Return: floatType})
+	env.Declare("vec_add", &types.Arrow{Args: []types.Type{adderVecType, adderVecType}, Return: adderVecType})
+	env.Declare("bad_bool_add", &types.Arrow{Args: []types.Type{boolType, intType}, Return: boolType})
 
 	if _, err := env.DeclareInstance(Int, intType, map[string]string{"+": "int_add", "&": "int_and"}); err != nil {
 		t.Fatal(err)

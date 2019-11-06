@@ -57,7 +57,7 @@ func (ctx *commonContext) instantiate(level int, t types.Type) types.Type {
 		for i, arg := range t.Args {
 			args[i] = ctx.instantiate(level, arg)
 		}
-		return &types.Arrow{Args: args, Return: ctx.instantiate(level, t.Return)}
+		return &types.Arrow{Args: args, Return: ctx.instantiate(level, t.Return), Method: t.Method}
 
 	case *types.Method:
 		arrow := ctx.instantiate(level, t.TypeClass.Methods[t.Name]).(*types.Arrow)

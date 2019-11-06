@@ -26,11 +26,13 @@ import (
 	"github.com/wdamron/poly/internal/util"
 )
 
+type MethodSet map[string]*Arrow
+
 // Parameterized type-class
 type TypeClass struct {
 	Name      string
 	Param     Type
-	Methods   map[string]*Arrow
+	Methods   MethodSet
 	Super     map[string]*TypeClass
 	Sub       map[string]*TypeClass
 	Instances []*Instance
@@ -40,7 +42,7 @@ type TypeClass struct {
 type Instance struct {
 	TypeClass *TypeClass
 	Param     Type
-	Methods   map[string]*Arrow
+	Methods   MethodSet
 }
 
 // InstanceConstraint constrains a type-variable to types which implement a type-class.
@@ -49,12 +51,15 @@ type InstanceConstraint struct {
 }
 
 // Create a new named/parameterized type-class with a set of method declarations.
-func NewTypeClass(name string, param Type, methods map[string]*Arrow) *TypeClass {
+func NewTypeClass(name string, param Type, methods MethodSet) *TypeClass {
 	return &TypeClass{Name: name, Param: param, Methods: methods}
 }
 
-// Add a super-class to the type-class.
+// Add a super-class to the type-class. This is an alias for `super.AddSubClass(sub)`.
 func (sub *TypeClass) AddSuperClass(super *TypeClass) { super.AddSubClass(sub) }
+
+// Add a super-class to the type-class. This is an alias for `super.AddSubClass(sub)`.
+func (sub *TypeClass) Implements(super *TypeClass) { super.AddSubClass(sub) }
 
 // Add a sub-class to the type-class.
 func (super *TypeClass) AddSubClass(sub *TypeClass) {
@@ -74,7 +79,7 @@ func (super *TypeClass) AddSubClass(sub *TypeClass) {
 }
 
 // Add an instance to the type-class with param as the type-parameter.
-func (tc *TypeClass) AddInstance(param Type, methods map[string]*Arrow) *Instance {
+func (tc *TypeClass) AddInstance(param Type, methods MethodSet) *Instance {
 	inst := &Instance{TypeClass: tc, Param: param, Methods: methods}
 	tc.Instances = append(tc.Instances, inst)
 	return inst

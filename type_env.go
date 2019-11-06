@@ -80,9 +80,6 @@ func (e *TypeEnv) NewQualifiedVar(constraints ...types.InstanceConstraint) *type
 // Declare a type for an identifier within the type environment.
 func (e *TypeEnv) Declare(name string, t types.Type) { e.Types[name] = generalize(-1, t) }
 
-// Remove a declared type for an identifier from the type environment.
-func (e *TypeEnv) Remove(name string) { delete(e.Types, name) }
-
 // Lookup the type for an identifier in the environment or its parent environment(s).
 func (e *TypeEnv) Lookup(name string) (types.Type, bool) {
 	if t, ok := e.Types[name]; ok {
@@ -95,30 +92,44 @@ func (e *TypeEnv) Lookup(name string) (types.Type, bool) {
 }
 
 // Declare a parameterized type-class within the type environment.
-func (e *TypeEnv) DeclareTypeClass(name string, param types.Type, methods map[string]*types.Arrow) (*types.TypeClass, error) {
-	if _, isFunction := param.(*types.Arrow); isFunction {
-		return nil, errors.New("Unsupported function parameter for type-class " + name)
+//
+// If the type-parameter is not linked within the bind function, an instance constraint will be added to the parameter.
+func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.MethodSet, implements ...*types.TypeClass) (*types.TypeClass, error) {
+	param := e.NewGenericVar()
+	methods := bind(param)
+	if param.IsLinkVar() {
+		if _, isFunction := types.RealType(param.Link()).(*types.Arrow); isFunction {
+			return nil, errors.New("Unsupported function parameter for type-class " + name)
+		}
 	}
-	methods2 := make(map[string]*types.Arrow, len(methods))
-	tc := types.NewTypeClass(name, generalize(-1, param), methods2)
+	generalizedMethods := make(types.MethodSet, len(methods))
+	tc := types.NewTypeClass(name, generalize(-1, param), generalizedMethods)
 	for name, arrow := range methods {
 		arrow = generalize(-1, arrow).(*types.Arrow)
-		methods2[name] = arrow
+		generalizedMethods[name] = arrow
 		e.Types[name] = &types.Method{TypeClass: tc, Name: name, HasGenericVars: arrow.HasGenericVars}
+	}
+	if param.IsGeneric() {
+		param.AddConstraint(tc)
+	} else {
+		tc.Param = types.RealType(tc.Param)
+	}
+	for _, super := range implements {
+		super.AddSubClass(tc)
 	}
 	return tc, nil
 }
 
 // Declare an instance for a parameterized type-class within the type environment. The instance must implement
-// all methods for the type-class and all parents of the type-class. The instance must not overlap with (i.e. unify with)
+// all methods for the type-class and all parents of the type-class. The instance type must not overlap with (i.e. unify with)
 // any other instances for the type-class, though this will not be checked.
 //
-// methodImpls must map from method names to names of their implementations.
+// methodImpls must map from method names to names of their implementations within the type-environment.
 func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodImpls map[string]string) (*types.Instance, error) {
 	if _, isFunction := param.(*types.Arrow); isFunction {
 		return nil, errors.New("Unsupported function instance for type-class " + tc.Name)
 	}
-	impls := make(map[string]*types.Arrow, len(methodImpls))
+	impls := make(types.MethodSet, len(methodImpls))
 	for name, implName := range methodImpls {
 		impl, ok := e.Lookup(implName)
 		if !ok {
@@ -130,14 +141,17 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodI
 		}
 		impls[name] = arrow
 	}
-	seen := util.NewDedupeMap()
 	if e.common == nil {
 		e.common = &commonContext{}
 		e.common.init()
 	}
-	inst := tc.AddInstance(generalize(-1, param), impls)
+	param = generalize(-1, param)
+	inst := tc.AddInstance(param, impls)
+	seen := util.NewDedupeMap()
 	err := e.checkSatisfies(tc, param, impls, seen)
 	seen.Release()
+	e.common.varTracker.FlattenLinks()
+	e.common.varTracker.ResetKeepId()
 	if err != nil {
 		tc.Instances = tc.Instances[:len(tc.Instances)-1]
 		return nil, err
@@ -145,7 +159,7 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodI
 	return inst, nil
 }
 
-func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodImpls map[string]*types.Arrow, seen map[string]bool) error {
+func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodImpls types.MethodSet, seen map[string]bool) error {
 	for name, def := range tc.Methods {
 		impl, ok := methodImpls[name]
 		if !ok || len(def.Args) != len(impl.Args) {
