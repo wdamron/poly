@@ -100,6 +100,42 @@ func TestRecursiveLet(t *testing.T) {
 	}
 }
 
+func TestRefs(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	expr := &ast.RecordExtend{
+		Labels: []ast.LabelValue{
+			{"id", &ast.Func{ArgNames: []string{"x"}, Body: &ast.Var{Name: "x"}}},
+		},
+	}
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeString := types.TypeString(ty)
+	if typeString != "{id : 'a -> 'a}" {
+		t.Fatalf("unexpected type string: %s", typeString)
+	}
+
+	env.Declare("someref", &types.Ref{Deref: &types.Const{"int"}})
+	expr = &ast.RecordExtend{
+		Labels: []ast.LabelValue{
+			{"id", &ast.Func{ArgNames: []string{"x"}, Body: &ast.Var{Name: "x"}}},
+			{"r", &ast.Var{Name: "someref"}},
+		},
+	}
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeString = types.TypeString(ty)
+	if typeString != "{id : '_0 -> '_0, r : ref[int]}" {
+		t.Fatalf("types containing references should not be generalized: %s", typeString)
+	}
+
+}
+
 func TestVariantMatch(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()

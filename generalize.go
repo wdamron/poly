@@ -27,82 +27,99 @@ import (
 )
 
 func generalize(level int, t types.Type) types.Type {
-	genericCount := 0
-	return generalizeRecursive(level, t, &genericCount)
+	counter := 0
+	t = visitType(0, t, types.ContainsRefs, &counter)
+	if counter > 0 {
+		// types containing mutable references must not be generalized
+		return t
+	}
+	counter = 0
+	return visitType(level, t, types.ContainsGenericVars, &counter)
 }
 
-func generalizeRecursive(level int, t types.Type, genericCount *int) types.Type {
+func visitType(level int, t types.Type, flag types.TypeFlags, counter *int) types.Type {
 	switch t := t.(type) {
 	case *types.Var:
 		switch {
 		case t.IsUnboundVar():
-			if t.Level() > level {
-				*genericCount++
-				t.SetGeneric()
+			if flag == types.ContainsGenericVars {
+				if t.Level() > level {
+					*counter++
+					t.SetGeneric()
+				}
 			}
 			return t
 		case t.IsLinkVar():
-			return generalizeRecursive(level, t.Link(), genericCount)
+			return visitType(level, t.Link(), flag, counter)
 		default:
-			*genericCount++
+			if flag == types.ContainsGenericVars {
+				*counter++
+			}
 			return t
 		}
 
-	case *types.App:
-		gcount := *genericCount
-		for i, arg := range t.Args {
-			t.Args[i] = generalizeRecursive(level, arg, genericCount)
+	case *types.Ref:
+		t.Deref = visitType(level, t.Deref, flag, counter)
+		if flag == types.ContainsRefs {
+			*counter++
 		}
-		t.Const = generalizeRecursive(level, t.Const, genericCount)
-		if *genericCount > gcount {
-			t.HasGenericVars = true
+		return t
+
+	case *types.App:
+		count := *counter
+		for i, arg := range t.Args {
+			t.Args[i] = visitType(level, arg, flag, counter)
+		}
+		t.Const = visitType(level, t.Const, flag, counter)
+		if *counter > count {
+			t.Flags |= flag
 		}
 		return t
 
 	case *types.Arrow:
-		gcount := *genericCount
+		count := *counter
 		for i, arg := range t.Args {
-			t.Args[i] = generalizeRecursive(level, arg, genericCount)
+			t.Args[i] = visitType(level, arg, flag, counter)
 		}
-		t.Return = generalizeRecursive(level, t.Return, genericCount)
-		if *genericCount > gcount {
-			t.HasGenericVars = true
+		t.Return = visitType(level, t.Return, flag, counter)
+		if *counter > count {
+			t.Flags |= flag
 		}
 		return t
 
 	case *types.Record:
-		gcount := *genericCount
-		t.Row = generalizeRecursive(level, t.Row, genericCount)
-		if *genericCount > gcount {
-			t.HasGenericVars = true
+		count := *counter
+		t.Row = visitType(level, t.Row, flag, counter)
+		if *counter > count {
+			t.Flags |= flag
 		}
 		return t
 
 	case *types.Variant:
-		gcount := *genericCount
-		t.Row = generalizeRecursive(level, t.Row, genericCount)
-		if *genericCount > gcount {
-			t.HasGenericVars = true
+		count := *counter
+		t.Row = visitType(level, t.Row, flag, counter)
+		if *counter > count {
+			t.Flags |= flag
 		}
 		return t
 
 	case *types.RowExtend:
-		gcount := *genericCount
+		count := *counter
 		m := t.Labels
 		mb := m.Builder()
 		m.Range(func(label string, ts types.TypeList) bool {
 			lb := ts.Builder()
 			ts.Range(func(i int, t types.Type) bool {
-				lb.Set(i, generalizeRecursive(level, t, genericCount))
+				lb.Set(i, visitType(level, t, flag, counter))
 				return true
 			})
 			mb.Set(label, lb.Build())
 			return true
 		})
-		t.Row = generalizeRecursive(level, t.Row, genericCount)
+		t.Row = visitType(level, t.Row, flag, counter)
 		t.Labels = mb.Build()
-		if *genericCount > gcount {
-			t.HasGenericVars = true
+		if *counter > count {
+			t.Flags |= flag
 		}
 		return t
 	}

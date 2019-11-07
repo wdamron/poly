@@ -107,7 +107,7 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 	for name, arrow := range methods {
 		arrow = generalize(-1, arrow).(*types.Arrow)
 		generalizedMethods[name] = arrow
-		e.Types[name] = &types.Method{TypeClass: tc, Name: name, HasGenericVars: arrow.HasGenericVars}
+		e.Types[name] = &types.Method{TypeClass: tc, Name: name, Flags: arrow.Flags}
 	}
 	if param.IsGeneric() {
 		param.AddConstraint(tc)

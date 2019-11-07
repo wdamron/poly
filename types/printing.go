@@ -132,6 +132,11 @@ func typeString(p *typePrinter, simple bool, t Type) {
 		}
 		p.sb.WriteByte(']')
 
+	case *Ref:
+		p.sb.WriteString("ref[")
+		typeString(p, false, t.Deref)
+		p.sb.WriteByte(']')
+
 	case *Arrow:
 		if simple {
 			p.sb.WriteByte('(')

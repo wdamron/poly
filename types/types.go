@@ -29,11 +29,26 @@ import (
 // Type is the base for all types.
 type Type interface {
 	TypeName() string
+	// Check if a type is a generic type-variable or contains generic type-variables.
 	IsGeneric() bool
+	// Check if a type is a mutable reference-type or contains mutable reference-types.
+	HasRefs() bool
 }
+
+type TypeFlags uint
+
+const (
+	// Type is a generic type-variable or contains generic type-variables
+	ContainsGenericVars TypeFlags = 1
+	// Type is a mutable reference-type or contains mutable reference-types
+	ContainsRefs TypeFlags = 2
+)
 
 // "Var"
 func (t *Var) TypeName() string { return "Var" }
+
+// "Ref"
+func (t *Ref) TypeName() string { return "Ref" }
 
 // Name of the type-constant
 func (t *Const) TypeName() string { return t.Name }
@@ -68,40 +83,84 @@ func (t *Var) IsGeneric() bool {
 	return r.IsGeneric()
 }
 
+// Check if t is linked to a type containing mutable reference-types.
+func (t *Var) HasRefs() bool {
+	r := RealType(t)
+	if _, ok := r.(*Var); ok {
+		return false
+	}
+	return r.HasRefs()
+}
+
+// Ref is never generic.
+func (t *Ref) IsGeneric() bool { return false }
+
+// Ref is a mutable reference-type.
+func (t *Ref) HasRefs() bool { return true }
+
 // Const is never generic.
 func (t *Const) IsGeneric() bool { return false }
 
-// Check if t contains any generic types.
-func (t *App) IsGeneric() bool { return t.HasGenericVars }
+// Const never contains mutable reference-types.
+func (t *Const) HasRefs() bool { return false }
 
 // Check if t contains any generic types.
-func (t *Arrow) IsGeneric() bool { return t.HasGenericVars }
+func (t *App) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
+
+// Check if t contains any mutable reference-types.
+func (t *App) HasRefs() bool { return t.Flags&ContainsRefs != 0 }
 
 // Check if t contains any generic types.
-func (t *Method) IsGeneric() bool { return t.TypeClass.Methods[t.Name].HasGenericVars }
+func (t *Arrow) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
+
+// Check if t contains any mutable reference-types.
+func (t *Arrow) HasRefs() bool { return t.Flags&ContainsRefs != 0 }
 
 // Check if t contains any generic types.
-func (t *Record) IsGeneric() bool { return t.HasGenericVars }
+func (t *Method) IsGeneric() bool { return t.TypeClass.Methods[t.Name].Flags&ContainsGenericVars != 0 }
+
+// Check if t contains any mutable reference-types.
+func (t *Method) HasRefs() bool { return t.TypeClass.Methods[t.Name].Flags&ContainsRefs != 0 }
 
 // Check if t contains any generic types.
-func (t *Variant) IsGeneric() bool { return t.HasGenericVars }
+func (t *Record) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
+
+// Check if t contains any mutable reference-types.
+func (t *Record) HasRefs() bool { return t.Flags&ContainsRefs != 0 }
 
 // Check if t contains any generic types.
-func (t *RowExtend) IsGeneric() bool { return t.HasGenericVars }
+func (t *Variant) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
+
+// Check if t contains any mutable reference-types.
+func (t *Variant) HasRefs() bool { return t.Flags&ContainsRefs != 0 }
+
+// Check if t contains any generic types.
+func (t *RowExtend) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
+
+// Check if t contains any mutable reference-types.
+func (t *RowExtend) HasRefs() bool { return t.Flags&ContainsRefs != 0 }
 
 // RowEmpty is never generic.
 func (t *RowEmpty) IsGeneric() bool { return false }
 
-// Type constant: `int` or `bool`
+// RowEmpty never contains mutable reference-types.
+func (t *RowEmpty) HasRefs() bool { return false }
+
+// Type constant: `int`, `bool`, etc
 type Const struct {
 	Name string
 }
 
+// Mutable reference: `ref[int]`
+type Ref struct {
+	Deref Type
+}
+
 // Type application: `list[int]`
 type App struct {
-	Const          Type
-	Args           []Type
-	HasGenericVars bool
+	Const Type
+	Args  []Type
+	Flags TypeFlags
 }
 
 // Function type: `(int, int) -> int`
@@ -109,34 +168,34 @@ type Arrow struct {
 	Args   []Type
 	Return Type
 	// Method which the function instantiates, or nil
-	Method         *Method
-	HasGenericVars bool
+	Method *Method
+	Flags  TypeFlags
 }
 
 // Type-class method type: `('a, int) -> 'a`
 type Method struct {
-	TypeClass      *TypeClass
-	Name           string
-	HasGenericVars bool
+	TypeClass *TypeClass
+	Name      string
+	Flags     TypeFlags
 }
 
 // Record type: `{...}`
 type Record struct {
-	Row            Type
-	HasGenericVars bool
+	Row   Type
+	Flags TypeFlags
 }
 
 // Variant type: `[...]`
 type Variant struct {
-	Row            Type
-	HasGenericVars bool
+	Row   Type
+	Flags TypeFlags
 }
 
 // Row extension: `<a : _ , b : _ | ...>`
 type RowExtend struct {
-	Row            Type
-	Labels         TypeMap
-	HasGenericVars bool
+	Row    Type
+	Labels TypeMap
+	Flags  TypeFlags
 }
 
 var RowEmptyPointer = (*RowEmpty)(nil)
