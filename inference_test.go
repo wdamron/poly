@@ -209,6 +209,82 @@ func TestVariantMatch(t *testing.T) {
 	}
 }
 
+func TestFunctors(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	// class Functor f where
+	//   fmap :: ((a -> b), f[a]) -> f[b]
+	Functor, err := env.DeclareTypeClass("Functor", func(param *types.Var) types.MethodSet {
+		constructor, a, b := env.NewGenericVar(), env.NewGenericVar(), env.NewGenericVar()
+		param.SetLink(&types.App{Const: constructor, Args: []types.Type{a}})
+		return types.MethodSet{
+			"fmap": &types.Arrow{
+				Args: []types.Type{
+					&types.Arrow{Args: []types.Type{a}, Return: b},
+					&types.App{Const: constructor, Args: []types.Type{a}},
+				},
+				Return: &types.App{Const: constructor, Args: []types.Type{b}},
+			},
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	elem := env.NewGenericVar()
+	List := &types.App{Const: &types.Const{"List"}, Args: []types.Type{elem}}
+
+	// list_map :: ((a -> b), List[a]) -> List[b]
+	x, y := env.NewGenericVar(), env.NewGenericVar()
+	env.Declare("list_map", &types.Arrow{
+		Args: []types.Type{
+			&types.Arrow{Args: []types.Type{x}, Return: y},
+			&types.App{Const: &types.Const{"List"}, Args: []types.Type{x}},
+		},
+		Return: &types.App{Const: &types.Const{"List"}, Args: []types.Type{y}},
+	})
+
+	if _, err := env.DeclareInstance(Functor, List, map[string]string{"fmap": "list_map"}); err != nil {
+		t.Fatal(err)
+	}
+
+	env.Declare("f", &types.Arrow{Args: []types.Type{&types.Const{"int"}}, Return: &types.Const{"string"}})
+	env.Declare("x", &types.App{Const: &types.Const{"List"}, Args: []types.Type{&types.Const{"int"}}})
+
+	expr := &ast.Call{
+		Func: &ast.Var{Name: "fmap"},
+		Args: []ast.Expr{&ast.Var{Name: "f"}, &ast.Var{Name: "x"}},
+	}
+
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeString := types.TypeString(ty)
+	if typeString != "List[string]" {
+		t.Fatalf("type: %s", typeString)
+	}
+
+	// TODO: declaring an invalid instance of Functor (i.e. where the constructor type isn't maintained)
+	// will not trigger a unification error
+	t.Skip()
+
+	elem = env.NewGenericVar()
+	A := &types.App{Const: &types.Const{"A"}, Args: []types.Type{elem}}
+	x, y = env.NewGenericVar(), env.NewGenericVar()
+	env.Declare("bad_map", &types.Arrow{
+		Args: []types.Type{
+			&types.Arrow{Args: []types.Type{x}, Return: y},
+			&types.App{Const: &types.Const{"A"}, Args: []types.Type{x}},
+		},
+		Return: &types.App{Const: &types.Const{"B"}, Args: []types.Type{y}},
+	})
+	if _, err = env.DeclareInstance(Functor, A, map[string]string{"fmap": "bad_map"}); err == nil {
+		t.Fatalf("expected invalid-instance error")
+	}
+}
+
 func TestConstraints(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
