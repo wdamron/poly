@@ -34,10 +34,9 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Ty
 	case *ast.Var:
 		t, ok := env.Lookup(e.Name)
 		if !ok {
-			ti.invalid, ti.err = e, errors.New("Variable "+e.Name+" not found")
+			ti.invalid, ti.err = e, errors.New("Variable "+e.Name+" not is not defined")
 			return nil, ti.err
 		}
-		ti.common.clearInstantiationLookup()
 		t = ti.common.instantiate(level, t)
 		if ti.annotate {
 			e.SetType(t)
@@ -45,6 +44,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Ty
 		return t, nil
 
 	case *ast.Let:
+		// Disallow self-references within non-function types:
 		if _, isFunc := e.Value.(*ast.Func); !isFunc {
 			t, err := ti.infer(env, level+1, e.Value)
 			if err != nil {
@@ -188,13 +188,8 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Ty
 			}
 		}
 		if ti.annotate {
-			if arrow, ok := ft.(*types.Arrow); ok {
-				if arrow.Method != nil {
-					e.SetFuncType(arrow.Method)
-				} else {
-					e.SetFuncType(arrow)
-				}
-			}
+			arrow, _ := ft.(*types.Arrow)
+			e.SetFuncType(arrow)
 			e.SetType(ret)
 		}
 		return ret, nil
@@ -207,41 +202,26 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Ty
 		return rt, nil
 
 	case *ast.RecordSelect:
-		rowType := ti.common.varTracker.New(level)
-		labelType := ti.common.varTracker.New(level)
-		labels := types.SingletonTypeMap(e.Label, labelType)
-		paramType := &types.Record{Row: &types.RowExtend{Row: rowType, Labels: labels}}
-		recordType, err := ti.infer(env, level, e.Record)
+		// label, rest := fresh(), fresh()
+		// unify({ <label>: label | rest }, record)
+		// -> label
+		label, _, err := ti.splitRecord(env, level, e.Record, e.Label)
 		if err != nil {
-			return nil, err
-		}
-		if err := ti.common.unify(paramType, recordType); err != nil {
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		if ti.annotate {
-			e.SetType(labelType)
-		}
-		return labelType, nil
+		return label, nil
 
 	case *ast.RecordRestrict:
-		rowType := ti.common.varTracker.New(level)
-		labelType := ti.common.varTracker.New(level)
-		labels := types.SingletonTypeMap(e.Label, labelType)
-		paramType := &types.Record{Row: &types.RowExtend{Row: rowType, Labels: labels}}
-		recordType, err := ti.infer(env, level, e.Record)
+		// label, rest := fresh(), fresh()
+		// unify({ <label>: label | rest }, record)
+		// -> rest
+		_, rest, err := ti.splitRecord(env, level, e.Record, e.Label)
 		if err != nil {
-			return nil, err
-		}
-		if err := ti.common.unify(paramType, recordType); err != nil {
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		rt := &types.Record{Row: rowType}
-		if ti.annotate {
-			e.SetType(rt)
-		}
-		return rt, nil
+		return rest, nil
 
 	case *ast.RecordExtend:
 		mb := types.NewTypeMapBuilder()
@@ -333,10 +313,32 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Ty
 	} else {
 		exprName = "(nil)"
 	}
-	ti.invalid, ti.err = e, errors.New("Unhandled expression "+exprName)
+	ti.invalid, ti.err = e, errors.New("Unhandled expression type "+exprName)
 	return nil, ti.err
 }
 
+// label, rest := fresh(), fresh()
+// unify({ <label>: label | rest }, record)
+// -> (label, rest)
+func (ti *InferenceContext) splitRecord(env *TypeEnv, level int, recordExpr ast.Expr, label string) (labelType types.Type, restType types.Type, err error) {
+	rowType := ti.common.varTracker.New(level)
+	labelType = ti.common.varTracker.New(level)
+	labels := types.SingletonTypeMap(label, labelType)
+	paramType := &types.Record{Row: &types.RowExtend{Row: rowType, Labels: labels}}
+	var recordType types.Type
+	recordType, err = ti.infer(env, level, recordExpr)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err = ti.common.unify(paramType, recordType); err != nil {
+		return nil, nil, err
+	}
+	restType = &types.Record{Row: rowType}
+	return
+}
+
+// If t is an unbound type-variable, instantiate a function with unbound type-variables for its arguments and return value;
+// otherwise, ensure t has the correct argument count.
 func (ti *InferenceContext) matchFuncType(argc int, t types.Type) (args []types.Type, ret types.Type, err error) {
 	switch t := t.(type) {
 	case *types.Arrow:
@@ -368,6 +370,15 @@ func (ti *InferenceContext) matchFuncType(argc int, t types.Type) (args []types.
 	return nil, nil, errors.New("Unexpected type " + t.TypeName() + " for applied function")
 }
 
+// https://github.com/tomprimozic/type-systems/blob/master/extensible_rows2/infer.ml#L287
+//
+// infer_cases env level return_ty rest_row_ty cases = match cases with
+// 	| [] -> rest_row_ty
+// 	| (label, var_name, expr) :: other_cases ->
+// 			let variant_ty = new_var level in
+// 			unify return_ty (infer (Env.extend env var_name variant_ty) level expr) ;
+// 			let other_cases_row = infer_cases env level return_ty rest_row_ty other_cases in
+// 			TRowExtend(LabelMap.singleton label [variant_ty], other_cases_row)
 func (ti *InferenceContext) inferCases(env *TypeEnv, level int, retType, rowType types.Type, cases []ast.MatchCase) (types.Type, error) {
 	extensions := make([]types.RowExtend, len(cases))
 	vars := ti.common.varTracker.NewList(level, len(cases))

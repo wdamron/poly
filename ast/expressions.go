@@ -84,7 +84,7 @@ type Call struct {
 	Func         Expr
 	Args         []Expr
 	inferred     types.Type
-	inferredFunc types.Type
+	inferredFunc *types.Arrow
 }
 
 // Get the inferred (or assigned) type of e.
@@ -94,10 +94,10 @@ func (e *Call) Type() types.Type { return types.RealType(e.inferred) }
 func (e *Call) SetType(t types.Type) { e.inferred = t }
 
 // Get the inferred (or assigned) function/method called in e.
-func (e *Call) FuncType() types.Type { return e.inferredFunc }
+func (e *Call) FuncType() *types.Arrow { return e.inferredFunc }
 
 // Assign the function/method called in e. Type assignments should occur indirectly, during inference.
-func (e *Call) SetFuncType(t types.Type) { e.inferredFunc = t }
+func (e *Call) SetFuncType(t *types.Arrow) { e.inferredFunc = t }
 
 // Abstraction: `fun x -> x`
 type Func struct {

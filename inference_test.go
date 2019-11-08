@@ -136,6 +136,49 @@ func TestRefs(t *testing.T) {
 
 }
 
+func TestRecords(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	env.Declare("a", &types.Const{"A"})
+	env.Declare("b", &types.Const{"B"})
+
+	record := &ast.RecordExtend{
+		Labels: []ast.LabelValue{
+			{"a", &ast.Var{Name: "a"}},
+			{"b", &ast.Var{Name: "b"}},
+		},
+	}
+
+	var expr ast.Expr = &ast.RecordSelect{
+		Label:  "a",
+		Record: record,
+	}
+
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeString := types.TypeString(ty)
+	if typeString != "A" {
+		t.Fatalf("expected A, found %s", typeString)
+	}
+
+	expr = &ast.RecordRestrict{
+		Label:  "a",
+		Record: record,
+	}
+
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeString = types.TypeString(ty)
+	if typeString != "{b : B}" {
+		t.Fatalf("expected {b : B}, found %s", typeString)
+	}
+}
+
 func TestVariantMatch(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
@@ -213,18 +256,17 @@ func TestFunctors(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	// class Functor f where
-	//   fmap :: ((a -> b), f[a]) -> f[b]
-	Functor, err := env.DeclareTypeClass("Functor", func(param *types.Var) types.MethodSet {
-		constructor, a, b := env.NewGenericVar(), env.NewGenericVar(), env.NewGenericVar()
-		param.SetLink(&types.App{Const: constructor, Args: []types.Type{a}})
+	// class Functor 'f where
+	//   fmap :: (('a -> 'b), 'f['a]) -> 'f['b]
+	Functor, err := env.DeclareTypeClass("Functor", func(f *types.Var) types.MethodSet {
+		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
 			"fmap": &types.Arrow{
 				Args: []types.Type{
 					&types.Arrow{Args: []types.Type{a}, Return: b},
-					&types.App{Const: constructor, Args: []types.Type{a}},
+					&types.App{Const: f, Args: []types.Type{a}},
 				},
-				Return: &types.App{Const: constructor, Args: []types.Type{b}},
+				Return: &types.App{Const: f, Args: []types.Type{b}},
 			},
 		}
 	})
@@ -232,31 +274,30 @@ func TestFunctors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	elem := env.NewGenericVar()
-	List := &types.App{Const: &types.Const{"List"}, Args: []types.Type{elem}}
-
-	// list_map :: ((a -> b), List[a]) -> List[b]
-	x, y := env.NewGenericVar(), env.NewGenericVar()
+	// fmap     :: (('a -> 'b),   'f['a]) ->   'f['b]
+	// list_map :: (('a -> 'b), List['a]) -> List['b]
+	//
+	// instance Functor List where
+	//   fmap = list_map
+	a, b := env.NewGenericVar(), env.NewGenericVar()
 	env.Declare("list_map", &types.Arrow{
 		Args: []types.Type{
-			&types.Arrow{Args: []types.Type{x}, Return: y},
-			&types.App{Const: &types.Const{"List"}, Args: []types.Type{x}},
+			&types.Arrow{Args: []types.Type{a}, Return: b},
+			&types.App{Const: &types.Const{"List"}, Args: []types.Type{a}},
 		},
-		Return: &types.App{Const: &types.Const{"List"}, Args: []types.Type{y}},
+		Return: &types.App{Const: &types.Const{"List"}, Args: []types.Type{b}},
 	})
-
-	if _, err := env.DeclareInstance(Functor, List, map[string]string{"fmap": "list_map"}); err != nil {
+	if _, err := env.DeclareInstance(Functor, &types.Const{"List"}, map[string]string{"fmap": "list_map"}); err != nil {
 		t.Fatal(err)
 	}
 
-	env.Declare("f", &types.Arrow{Args: []types.Type{&types.Const{"int"}}, Return: &types.Const{"string"}})
-	env.Declare("x", &types.App{Const: &types.Const{"List"}, Args: []types.Type{&types.Const{"int"}}})
+	env.Declare("itoa", &types.Arrow{Args: []types.Type{&types.Const{"int"}}, Return: &types.Const{"string"}})
+	env.Declare("someintlist", &types.App{Const: &types.Const{"List"}, Args: []types.Type{&types.Const{"int"}}})
 
 	expr := &ast.Call{
 		Func: &ast.Var{Name: "fmap"},
-		Args: []ast.Expr{&ast.Var{Name: "f"}, &ast.Var{Name: "x"}},
+		Args: []ast.Expr{&ast.Var{Name: "itoa"}, &ast.Var{Name: "someintlist"}},
 	}
-
 	ty, err := ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -266,21 +307,90 @@ func TestFunctors(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 
-	// TODO: declaring an invalid instance of Functor (i.e. where the constructor type isn't maintained)
-	// will not trigger a unification error
-	t.Skip()
+	// detect invalid instances
 
-	elem = env.NewGenericVar()
-	A := &types.App{Const: &types.Const{"A"}, Args: []types.Type{elem}}
-	x, y = env.NewGenericVar(), env.NewGenericVar()
+	// fmap    :: (('a -> 'b), 'f['a]) -> 'f['b]
+	// bad_map :: (('a -> 'b),  A['a]) ->  B['b]
+	//
+	// instance Functor A where
+	//   fmap = bad_map
+	a, b = env.NewGenericVar(), env.NewGenericVar()
 	env.Declare("bad_map", &types.Arrow{
 		Args: []types.Type{
-			&types.Arrow{Args: []types.Type{x}, Return: y},
-			&types.App{Const: &types.Const{"A"}, Args: []types.Type{x}},
+			&types.Arrow{Args: []types.Type{a}, Return: b},
+			&types.App{Const: &types.Const{"A"}, Args: []types.Type{a}},
 		},
-		Return: &types.App{Const: &types.Const{"B"}, Args: []types.Type{y}},
+		Return: &types.App{Const: &types.Const{"B"}, Args: []types.Type{b}},
 	})
-	if _, err = env.DeclareInstance(Functor, A, map[string]string{"fmap": "bad_map"}); err == nil {
+	if _, err = env.DeclareInstance(Functor, &types.Const{"A"}, map[string]string{"fmap": "bad_map"}); err == nil {
+		t.Fatalf("expected invalid-instance error")
+	}
+
+	// class (Functor 'f) => Applicative 'f where
+	//   pure  :: 'a -> 'f['a]
+	//   (<*>) :: 'f[('a -> 'b)] -> 'f['a] -> 'f['b]
+	Applicative, err := env.DeclareTypeClass("Applicative", func(f *types.Var) types.MethodSet {
+		a, b := env.NewGenericVar(), env.NewGenericVar()
+		f.AddConstraint(Functor)
+		return types.MethodSet{
+			"pure": &types.Arrow{
+				Args:   []types.Type{a},
+				Return: &types.App{Const: f, Args: []types.Type{a}},
+			},
+			"<*>": &types.Arrow{
+				Args: []types.Type{
+					&types.App{Const: f, Args: []types.Type{&types.Arrow{Args: []types.Type{a}, Return: b}}},
+					&types.App{Const: f, Args: []types.Type{a}},
+				},
+				Return: &types.App{Const: f, Args: []types.Type{b}},
+			},
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// pure     :: 'a ->   'f['a]
+	// new_list :: 'a -> List['a]
+	//
+	// (<*>)   ::   'f[('a -> 'b)] ->   'f['a] ->   'f['b]
+	// list_ap :: List[('a -> 'b)] -> List['a] -> List['b]
+	//
+	// instance Applicative List where
+	//   pure = new_list
+	//   (<*>) = list_ap
+	a = env.NewGenericVar()
+	env.Declare("new_list", &types.Arrow{
+		Args:   []types.Type{a},
+		Return: &types.App{Const: &types.Const{"List"}, Args: []types.Type{a}},
+	})
+	a, b = env.NewGenericVar(), env.NewGenericVar()
+	env.Declare("list_ap", &types.Arrow{
+		Args: []types.Type{
+			&types.App{Const: &types.Const{"List"}, Args: []types.Type{&types.Arrow{Args: []types.Type{a}, Return: b}}},
+			&types.App{Const: &types.Const{"List"}, Args: []types.Type{a}},
+		},
+		Return: &types.App{Const: &types.Const{"List"}, Args: []types.Type{b}},
+	})
+	if _, err := env.DeclareInstance(Applicative, &types.Const{"List"}, map[string]string{"pure": "new_list", "<*>": "list_ap"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// bad applicative (Vec is not declared as a Functor instance)
+	a = env.NewGenericVar()
+	env.Declare("new_vec", &types.Arrow{
+		Args:   []types.Type{a},
+		Return: &types.App{Const: &types.Const{"Vec"}, Args: []types.Type{a}},
+	})
+	a, b = env.NewGenericVar(), env.NewGenericVar()
+	env.Declare("vec_ap", &types.Arrow{
+		Args: []types.Type{
+			&types.App{Const: &types.Const{"Vec"}, Args: []types.Type{&types.Arrow{Args: []types.Type{a}, Return: b}}},
+			&types.App{Const: &types.Const{"Vec"}, Args: []types.Type{a}},
+		},
+		Return: &types.App{Const: &types.Const{"Vec"}, Args: []types.Type{b}},
+	})
+	if _, err := env.DeclareInstance(Applicative, &types.Const{"Vec"}, map[string]string{"pure": "new_vec", "<*>": "vec_ap"}); err == nil {
 		t.Fatalf("expected invalid-instance error")
 	}
 }
@@ -295,6 +405,11 @@ func TestConstraints(t *testing.T) {
 	shortType := &types.Const{"short"}
 	floatType := &types.Const{"float"}
 	boolType := &types.Const{"bool"}
+
+	intVecType := &types.App{
+		Const: &types.Const{"vec"},
+		Args:  []types.Type{intType},
+	}
 
 	Add, err := env.DeclareTypeClass("Add", func(param *types.Var) types.MethodSet {
 		return types.MethodSet{
@@ -327,6 +442,7 @@ func TestConstraints(t *testing.T) {
 	env.Declare("short_and", &types.Arrow{Args: []types.Type{shortType, shortType}, Return: shortType})
 	env.Declare("float_add", &types.Arrow{Args: []types.Type{floatType, floatType}, Return: floatType})
 	env.Declare("vec_add", &types.Arrow{Args: []types.Type{adderVecType, adderVecType}, Return: adderVecType})
+	env.Declare("int_vec_add", &types.Arrow{Args: []types.Type{intVecType, intVecType}, Return: intVecType})
 	env.Declare("bad_bool_add", &types.Arrow{Args: []types.Type{boolType, intType}, Return: boolType})
 
 	if _, err := env.DeclareInstance(Int, intType, map[string]string{"+": "int_add", "&": "int_and"}); err != nil {
@@ -340,6 +456,10 @@ func TestConstraints(t *testing.T) {
 	}
 	if _, err := env.DeclareInstance(Add, adderVecType, map[string]string{"+": "vec_add"}); err != nil {
 		t.Fatal(err)
+	}
+	// detect overlapping instances:
+	if _, err := env.DeclareInstance(Add, intVecType, map[string]string{"+": "int_vec_add"}); err == nil {
+		t.Fatalf("expected instance-overlap error")
 	}
 
 	env.Declare("somebool", boolType)
@@ -358,6 +478,34 @@ func TestConstraints(t *testing.T) {
 		Const: &types.Const{"vec"},
 		Args:  []types.Type{boolType},
 	})
+
+	// method-instance lookups
+
+	call := &ast.Call{
+		Func: &ast.Var{Name: "+"},
+		Args: []ast.Expr{&ast.Var{Name: "someint"}, &ast.Var{Name: "someint"}},
+	}
+	if err = ctx.AnnotateDirect(call, env); err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(call.Type()) != "int" {
+		t.Fatalf("expected int return, found " + types.TypeString(call.Type()))
+	}
+
+	method := call.FuncType().Method
+	if method == nil || method.Name != "+" || method.TypeClass != Add {
+		t.Fatalf("no method annotated on call or method = %#+v", call.FuncType())
+	}
+	methodInstance := env.FindMethodInstance(call.FuncType())
+	if methodInstance == nil {
+		t.Fatal("no method instance found")
+	}
+	if types.TypeString(methodInstance.Param) != "int" {
+		t.Fatalf("expected int instance, found %s", types.TypeString(methodInstance.Param))
+	}
+	if methodInstance.MethodNames["+"] != "int_add" {
+		t.Fatalf("expected int_add, found %s", methodInstance.MethodNames["+"])
+	}
 
 	// method/instance inference
 
@@ -523,23 +671,6 @@ func TestConstraints(t *testing.T) {
 	typeString = types.TypeString(ty)
 	if typeString != "int -> int" {
 		t.Fatalf("expected int -> int, found %s", typeString)
-	}
-
-	// annotation
-
-	call := &ast.Call{
-		Func: &ast.Var{Name: "+"},
-		Args: []ast.Expr{&ast.Var{Name: "someint"}, &ast.Var{Name: "someint"}},
-	}
-	if err = ctx.AnnotateDirect(call, env); err != nil {
-		t.Fatal(err)
-	}
-	if tt, ok := call.Type().(*types.Const); !ok || tt.Name != "int" {
-		t.Fatalf("expected int return, found " + tt.Name)
-	}
-	method, isMethod := call.FuncType().(*types.Method)
-	if !isMethod || method == nil || method.Name != "+" || method.TypeClass != Add {
-		t.Fatalf("no method annotated on call or method = %#+v", call.FuncType())
 	}
 
 	// instance validation

@@ -124,6 +124,8 @@ func (ctx *commonContext) unstashLinks(count int) {
 }
 
 // InferenceContext is a re-usable context for type inference.
+//
+// An inference context cannot be used concurrently.
 type InferenceContext struct {
 	common      commonContext
 	err         error
@@ -174,6 +176,10 @@ func (ti *InferenceContext) Error() error { return ti.err }
 func (ti *InferenceContext) InvalidExpr() ast.Expr { return ti.invalid }
 
 // Infer the type of expr within env.
+//
+// A type-environment cannot be used concurrently for inference; to share a type-environment
+// across threads, create a new type-environment for each thread which inherits from the
+// shared environment.
 func (ti *InferenceContext) Infer(expr ast.Expr, env *TypeEnv) (types.Type, error) {
 	nocopy := false
 	_, t, err := ti.inferRoot(expr, env, nocopy)
@@ -181,6 +187,10 @@ func (ti *InferenceContext) Infer(expr ast.Expr, env *TypeEnv) (types.Type, erro
 }
 
 // Infer the type of expr within env. The type-annotated copy of expr will be returned.
+//
+// A type-environment cannot be used concurrently for inference; to share a type-environment
+// across threads, create a new type-environment for each thread which inherits from the
+// shared environment.
 func (ti *InferenceContext) Annotate(expr ast.Expr, env *TypeEnv) (ast.Expr, error) {
 	nocopy := false
 	ti.annotate = true
@@ -191,6 +201,10 @@ func (ti *InferenceContext) Annotate(expr ast.Expr, env *TypeEnv) (ast.Expr, err
 
 // Infer the type of expr within env. Type-annotations will be added directly to expr.
 // All sub-expressions of expr must have unique addresses.
+//
+// A type-environment cannot be used concurrently for inference; to share a type-environment
+// across threads, create a new type-environment for each thread which inherits from the
+// shared environment.
 func (ti *InferenceContext) AnnotateDirect(expr ast.Expr, env *TypeEnv) error {
 	nocopy := true
 	ti.annotate = true

@@ -185,7 +185,7 @@ func (a *analysis) analyzeExpr(expr ast.Expr) error {
 	case *ast.LetGroup:
 		if _, exists := a.groupNums[expr]; exists {
 			a.invalid = expr
-			return errors.New("non-unique nested let-group pointer")
+			return errors.New("Nested let-groups must not share the same address")
 		}
 		num := len(a.groupNums)
 		a.groupNums[expr] = num
@@ -199,7 +199,7 @@ func (a *analysis) analyzeExpr(expr ast.Expr) error {
 		for _, v := range expr.Vars {
 			if !graph.addVert(v.Var) {
 				a.invalid = expr
-				return errors.New("non-unique binding names for " + v.Var + " within let-group")
+				return errors.New("Found duplicate bindings for " + v.Var + " within let-group")
 			}
 			stashed += a.stash(v.Var)
 			a.scopes[v.Var] = num

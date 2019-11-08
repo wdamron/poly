@@ -36,10 +36,10 @@ func (ctx *commonContext) occursAdjustLevels(id, level int, t types.Type) error 
 		case t.IsLinkVar():
 			return ctx.occursAdjustLevels(id, level, t.Link())
 		case t.IsGenericVar():
-			return errors.New("Invalid occurrance check within generic type-variable")
+			return errors.New("Types must be instantiated before checking for recursion")
 		case t.IsUnboundVar():
 			if t.Id() == id {
-				return errors.New("Invalid recursive types")
+				return errors.New("Recursive types are not supported")
 			}
 			if t.Level() > level {
 				if ctx.speculate {
@@ -106,6 +106,16 @@ func (ctx *commonContext) tryUnify(a, b types.Type) error {
 	return err
 }
 
+func (ctx *commonContext) canUnify(a, b types.Type) bool {
+	speculating := ctx.speculate
+	ctx.speculate = true
+	stashedLinks := ctx.linkStash
+	err := ctx.unify(a, b)
+	ctx.unstashLinks(len(ctx.linkStash) - len(stashedLinks))
+	ctx.speculate, ctx.linkStash = speculating, stashedLinks
+	return err == nil
+}
+
 func (ctx *commonContext) unify(a, b types.Type) error {
 	if a == b {
 		return nil
@@ -120,7 +130,7 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 			bv, bIsVar := b.(*types.Var)
 			if bIsVar {
 				if bv.IsUnboundVar() && a.Id() == bv.Id() {
-					return errors.New("Cannot unify pair of unbound type-variables")
+					return errors.New("Recursive types are not supported")
 				}
 			}
 			if ctx.speculate {
@@ -171,7 +181,7 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 			a.SetLink(b)
 			return nil
 		default:
-			return errors.New("Generic type-variable was not generalized or instantiated before unification")
+			return errors.New("Generic type-variable was not instantiated before unification")
 		}
 	}
 

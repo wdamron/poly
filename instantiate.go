@@ -30,6 +30,14 @@ func (ctx *commonContext) instantiate(level int, t types.Type) types.Type {
 	if !t.IsGeneric() {
 		return t
 	}
+	ctx.clearInstantiationLookup()
+	return ctx.instantiateRecursive(level, t)
+}
+
+func (ctx *commonContext) instantiateRecursive(level int, t types.Type) types.Type {
+	if !t.IsGeneric() {
+		return t
+	}
 
 	switch t := t.(type) {
 	case *types.Var:
@@ -48,27 +56,27 @@ func (ctx *commonContext) instantiate(level int, t types.Type) types.Type {
 	case *types.App:
 		args := make([]types.Type, len(t.Args))
 		for i, arg := range t.Args {
-			args[i] = ctx.instantiate(level, arg)
+			args[i] = ctx.instantiateRecursive(level, arg)
 		}
-		return &types.App{Const: ctx.instantiate(level, t.Const), Args: args}
+		return &types.App{Const: ctx.instantiateRecursive(level, t.Const), Args: args}
 
 	case *types.Arrow:
 		args := make([]types.Type, len(t.Args))
 		for i, arg := range t.Args {
-			args[i] = ctx.instantiate(level, arg)
+			args[i] = ctx.instantiateRecursive(level, arg)
 		}
-		return &types.Arrow{Args: args, Return: ctx.instantiate(level, t.Return), Method: t.Method}
+		return &types.Arrow{Args: args, Return: ctx.instantiateRecursive(level, t.Return), Method: t.Method}
 
 	case *types.Method:
-		arrow := ctx.instantiate(level, t.TypeClass.Methods[t.Name]).(*types.Arrow)
+		arrow := ctx.instantiateRecursive(level, t.TypeClass.Methods[t.Name]).(*types.Arrow)
 		arrow.Method = t
 		return arrow
 
 	case *types.Record:
-		return &types.Record{Row: ctx.instantiate(level, t.Row)}
+		return &types.Record{Row: ctx.instantiateRecursive(level, t.Row)}
 
 	case *types.Variant:
-		return &types.Variant{Row: ctx.instantiate(level, t.Row)}
+		return &types.Variant{Row: ctx.instantiateRecursive(level, t.Row)}
 
 	case *types.RowExtend:
 		m := t.Labels
@@ -76,13 +84,13 @@ func (ctx *commonContext) instantiate(level int, t types.Type) types.Type {
 		m.Range(func(label string, ts types.TypeList) bool {
 			lb := ts.Builder()
 			ts.Range(func(i int, t types.Type) bool {
-				lb.Set(i, ctx.instantiate(level, t))
+				lb.Set(i, ctx.instantiateRecursive(level, t))
 				return true
 			})
 			mb.Set(label, lb.Build())
 			return true
 		})
-		return &types.RowExtend{Row: ctx.instantiate(level, t.Row), Labels: mb.Build()}
+		return &types.RowExtend{Row: ctx.instantiateRecursive(level, t.Row), Labels: mb.Build()}
 	}
 	panic("unexpected generic type " + t.TypeName())
 }

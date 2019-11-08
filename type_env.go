@@ -122,22 +122,30 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 
 // Declare an instance for a parameterized type-class within the type environment. The instance must implement
 // all methods for the type-class and all parents of the type-class. The instance type must not overlap with (i.e. unify with)
-// any other instances for the type-class, though this will not be checked.
+// any other instances for the type-class.
 //
-// methodImpls must map from method names to names of their implementations within the type-environment.
-func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodImpls map[string]string) (*types.Instance, error) {
+// methodNames must map from method names to names of their implementations within the type-environment.
+func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodNames map[string]string) (*types.Instance, error) {
 	if _, isFunction := param.(*types.Arrow); isFunction {
 		return nil, errors.New("Unsupported function instance for type-class " + tc.Name)
 	}
-	impls := make(types.MethodSet, len(methodImpls))
-	for name, implName := range methodImpls {
+	// prevent overlapping instances:
+	overlap := tc.FindInstanceFromRoots(func(inst *types.Instance) bool {
+		return e.common.canUnify(e.common.instantiate(0, param), e.common.instantiate(0, inst.Param))
+	})
+	if overlap {
+		return nil, errors.New("Found overlapping instance for type-class " + tc.Name)
+	}
+
+	impls := make(types.MethodSet, len(methodNames))
+	for name, implName := range methodNames {
 		impl, ok := e.Lookup(implName)
 		if !ok {
-			return nil, errors.New("Missing method implementation " + methodImpls[name] + " for " + name)
+			return nil, errors.New("Missing method implementation " + methodNames[name] + " for " + name)
 		}
 		arrow, ok := impl.(*types.Arrow)
 		if !ok {
-			return nil, errors.New("Method implementation " + methodImpls[name] + " for " + name + "is not a function")
+			return nil, errors.New("Method implementation " + methodNames[name] + " for " + name + "is not a function")
 		}
 		impls[name] = arrow
 	}
@@ -147,6 +155,7 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodI
 	}
 	param = generalize(-1, param)
 	inst := tc.AddInstance(param, impls)
+	inst.MethodNames = methodNames
 	seen := util.NewDedupeMap()
 	err := e.checkSatisfies(tc, param, impls, seen)
 	seen.Release()
@@ -159,25 +168,38 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodI
 	return inst, nil
 }
 
+// Find the type-class instance which implements a called function's underlying method.
+//
+// arrow should be the function-type assigned to a Call expression during inference.
+// If the Call expression was not inferred to be a method call, a nil instance will be returned.
+func (e *TypeEnv) FindMethodInstance(arrow *types.Arrow) *types.Instance {
+	method := arrow.Method
+	if method == nil {
+		return nil
+	}
+	if e.common == nil {
+		e.common = &commonContext{}
+		e.common.init()
+	}
+	var match *types.Instance
+	method.TypeClass.FindInstance(func(inst *types.Instance) bool {
+		if !e.common.canUnify(e.common.instantiate(0, arrow), e.common.instantiate(0, inst.Methods[method.Name])) {
+			return false
+		}
+		match = inst
+		return true
+	})
+	return match
+}
+
 func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodImpls types.MethodSet, seen map[string]bool) error {
 	for name, def := range tc.Methods {
 		impl, ok := methodImpls[name]
 		if !ok || len(def.Args) != len(impl.Args) {
-			return methodErr(tc, param, name, nil)
+			return methodErr(tc, param, name)
 		}
-		speculating := e.common.speculate
-		e.common.speculate = true
-		stashedLinks := e.common.linkStash
-		var err error
-		for i, arg := range def.Args {
-			if err = e.common.unify(e.common.instantiate(0, arg), e.common.instantiate(0, impl.Args[i])); err != nil {
-				break
-			}
-		}
-		e.common.unstashLinks(len(e.common.linkStash) - len(stashedLinks))
-		e.common.speculate, e.common.linkStash = speculating, stashedLinks
-		if err != nil {
-			return methodErr(tc, param, name, err)
+		if !e.common.canUnify(e.common.instantiate(0, def).(*types.Arrow), e.common.instantiate(0, impl).(*types.Arrow)) {
+			return methodErr(tc, param, name)
 		}
 	}
 	seen[tc.Name] = true
@@ -193,10 +215,6 @@ func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodIm
 }
 
 // TODO: use wrapped errors
-func methodErr(tc *types.TypeClass, param types.Type, method string, err error) error {
-	str := "type " + types.TypeString(param) + " does not implement method " + method + " of type-class " + tc.Name
-	if err != nil {
-		str += " -- " + err.Error()
-	}
-	return errors.New(str)
+func methodErr(tc *types.TypeClass, param types.Type, method string) error {
+	return errors.New("Type " + types.TypeString(param) + " does not implement method " + method + " of type-class " + tc.Name)
 }

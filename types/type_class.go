@@ -43,6 +43,8 @@ type Instance struct {
 	TypeClass *TypeClass
 	Param     Type
 	Methods   MethodSet
+	// MethodNames maps method names to names of their implementations within the type-environment.
+	MethodNames map[string]string
 }
 
 // InstanceConstraint constrains a type-variable to types which implement a type-class.
@@ -91,6 +93,42 @@ func (tc *TypeClass) FindInstance(found func(*Instance) bool) bool {
 	ok, _ := tc.findInstance(seen, found)
 	seen.Release()
 	return ok
+}
+
+// Visit all instances for each of the type-class's top-most parents and all their (transitive) sub-classes. Sub-classes will be visited first.
+func (tc *TypeClass) FindInstanceFromRoots(found func(*Instance) bool) bool {
+	roots := make(map[string]*TypeClass, 32)
+	tc.findRoots(roots)
+	var (
+		ok             bool
+		shouldContinue bool
+	)
+	seen := util.NewDedupeMap()
+	for _, root := range roots {
+		if root == nil {
+			// not a root
+			continue
+		}
+		if ok, shouldContinue = root.findInstance(seen, found); !shouldContinue {
+			break
+		}
+	}
+	seen.Release()
+	return ok
+}
+
+func (tc *TypeClass) findRoots(roots map[string]*TypeClass) {
+	if _, seen := roots[tc.Name]; seen {
+		return
+	}
+	if len(tc.Super) == 0 {
+		roots[tc.Name] = tc
+		return
+	}
+	roots[tc.Name] = nil
+	for _, super := range tc.Super {
+		super.findRoots(roots)
+	}
 }
 
 func (tc *TypeClass) findInstance(seen map[string]bool, found func(*Instance) bool) (ok, shouldContinue bool) {
