@@ -26,6 +26,7 @@ import (
 	"github.com/wdamron/poly/internal/util"
 )
 
+// MethodSet is a set of named function-types declared for a type-class or instance.
 type MethodSet map[string]*Arrow
 
 // Parameterized type-class
@@ -60,9 +61,6 @@ func NewTypeClass(name string, param Type, methods MethodSet) *TypeClass {
 // Add a super-class to the type-class. This is an alias for `super.AddSubClass(sub)`.
 func (sub *TypeClass) AddSuperClass(super *TypeClass) { super.AddSubClass(sub) }
 
-// Add a super-class to the type-class. This is an alias for `super.AddSubClass(sub)`.
-func (sub *TypeClass) Implements(super *TypeClass) { super.AddSubClass(sub) }
-
 // Add a sub-class to the type-class.
 func (super *TypeClass) AddSubClass(sub *TypeClass) {
 	for _, tc := range super.Sub {
@@ -81,10 +79,33 @@ func (super *TypeClass) AddSubClass(sub *TypeClass) {
 }
 
 // Add an instance to the type-class with param as the type-parameter.
-func (tc *TypeClass) AddInstance(param Type, methods MethodSet) *Instance {
-	inst := &Instance{TypeClass: tc, Param: param, Methods: methods}
+//
+// methodNames must map from method names to names of their implementations within the type-environment.
+func (tc *TypeClass) AddInstance(param Type, methods MethodSet, methodNames map[string]string) *Instance {
+	inst := &Instance{TypeClass: tc, Param: param, Methods: methods, MethodNames: methodNames}
 	tc.Instances = append(tc.Instances, inst)
 	return inst
+}
+
+// Check if a type-class has a super-class with a given name.
+func (tc *TypeClass) HasSuperClass(name string) bool {
+	seen := util.NewDedupeMap()
+	found := tc.hasSuperClass(seen, name)
+	seen.Release()
+	return found
+}
+
+func (tc *TypeClass) hasSuperClass(seen map[string]bool, name string) bool {
+	seen[tc.Name] = true
+	for _, super := range tc.Super {
+		switch {
+		case seen[super.Name]:
+			return false
+		case super.Name == name, super.hasSuperClass(seen, name):
+			return true
+		}
+	}
+	return false
 }
 
 // Visit all instances for the type-class and all sub-classes. Sub-classes will be visited first.

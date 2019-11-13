@@ -256,7 +256,7 @@ func TestVariantMatch(t *testing.T) {
 	}
 }
 
-func TestFunctors(t *testing.T) {
+func TestHigherKindedTypes(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
@@ -278,36 +278,146 @@ func TestFunctors(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// fmap     :: (('a -> 'b),   'f['a]) ->   'f['b]
-	// list_map :: (('a -> 'b), List['a]) -> List['b]
+	// class (Functor 'f) => Applicative 'f where
+	//   pure  :: 'a -> 'f['a]
+	//   (<*>) :: ('f[('a -> 'b)], 'f['a]) -> 'f['b]
+	Applicative, err := env.DeclareTypeClass("Applicative", func(f *types.Var) types.MethodSet {
+		a, b := env.NewGenericVar(), env.NewGenericVar()
+		return types.MethodSet{
+			"pure": &types.Arrow{
+				Args:   []types.Type{a},
+				Return: &types.App{Const: f, Args: []types.Type{a}},
+			},
+			"(<*>)": &types.Arrow{
+				Args: []types.Type{
+					&types.App{Const: f, Args: []types.Type{&types.Arrow{Args: []types.Type{a}, Return: b}}},
+					&types.App{Const: f, Args: []types.Type{a}},
+				},
+				Return: &types.App{Const: f, Args: []types.Type{b}},
+			},
+		}
+	}, Functor) // extends/subsumes Functor
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// class (Applicative 'm) => Monad 'm where
+	//   (>>=) :: ('m['a], (a -> 'm['b])) -> 'm['b]
+	Monad, err := env.DeclareTypeClass("Monad", func(m *types.Var) types.MethodSet {
+		a, b := env.NewGenericVar(), env.NewGenericVar()
+		return types.MethodSet{
+			"(>>=)": &types.Arrow{
+				Args: []types.Type{
+					&types.App{Const: m, Args: []types.Type{a}},
+					&types.Arrow{Args: []types.Type{a}, Return: &types.App{Const: m, Args: []types.Type{b}}},
+				},
+				Return: &types.App{Const: m, Args: []types.Type{b}},
+			},
+		}
+	}, Applicative) // extends/subsumes Applicative
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// fmap       :: (('a -> 'b),     'f['a]) ->     'f['b]
+	// option_map :: (('a -> 'b), Option['a]) -> Option['b]
 	//
-	// instance Functor List where
-	//   fmap = list_map
-	a, b := env.NewGenericVar(), env.NewGenericVar()
-	env.Declare("list_map", &types.Arrow{
+	// pure :: 'a ->     'f['a]
+	// some :: 'a -> Option['a]
+	//
+	// (<*>)     ::     ('f[('a -> 'b)],     'f['a]) ->     'f['b]
+	// option_ap :: (Option[('a -> 'b)], Option['a]) -> Option['b]
+	//
+	// (>>=)       ::     ('m['a], (a ->     'm['b])) ->     'm['b]
+	// option_bind :: (Option['a], (a -> Option['b])) -> Option['b]
+	//
+	// instance Monad Option where
+	//   fmap  = option_map
+	//   pure  = some
+	//   (<*>) = option_ap
+	//   (>>=) = option_bind
+	a, b, option := env.NewGenericVar(), env.NewGenericVar(), &types.Const{"Option"}
+	env.Declare("option_map", &types.Arrow{
 		Args: []types.Type{
 			&types.Arrow{Args: []types.Type{a}, Return: b},
-			&types.App{Const: &types.Const{"List"}, Args: []types.Type{a}},
+			&types.App{Const: option, Args: []types.Type{a}},
 		},
-		Return: &types.App{Const: &types.Const{"List"}, Args: []types.Type{b}},
+		Return: &types.App{Const: option, Args: []types.Type{b}},
 	})
-	if _, err := env.DeclareInstance(Functor, &types.Const{"List"}, map[string]string{"fmap": "list_map"}); err != nil {
+	a = env.NewGenericVar()
+	env.Declare("some", &types.Arrow{
+		Args:   []types.Type{a},
+		Return: &types.App{Const: option, Args: []types.Type{a}},
+	})
+	a, b = env.NewGenericVar(), env.NewGenericVar()
+	env.Declare("option_ap", &types.Arrow{
+		Args: []types.Type{
+			&types.App{Const: option, Args: []types.Type{&types.Arrow{Args: []types.Type{a}, Return: b}}},
+			&types.App{Const: option, Args: []types.Type{a}},
+		},
+		Return: &types.App{Const: option, Args: []types.Type{b}},
+	})
+	a, b = env.NewGenericVar(), env.NewGenericVar()
+	env.Declare("option_bind", &types.Arrow{
+		Args: []types.Type{
+			&types.App{Const: option, Args: []types.Type{a}},
+			&types.Arrow{Args: []types.Type{a}, Return: &types.App{Const: option, Args: []types.Type{b}}},
+		},
+		Return: &types.App{Const: option, Args: []types.Type{b}},
+	})
+	optionMethods := map[string]string{"fmap": "option_map", "pure": "some", "(<*>)": "option_ap", "(>>=)": "option_bind"}
+	// Declaring instances for Functor and Applicative is not strictly necessary, but should not cause errors
+	// due to overlapping instances:
+	if _, err := env.DeclareInstance(Functor, option, optionMethods); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.DeclareInstance(Applicative, option, optionMethods); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := env.DeclareInstance(Monad, option, optionMethods); err != nil {
 		t.Fatal(err)
 	}
 
 	env.Declare("itoa", &types.Arrow{Args: []types.Type{&types.Const{"int"}}, Return: &types.Const{"string"}})
-	env.Declare("someintlist", &types.App{Const: &types.Const{"List"}, Args: []types.Type{&types.Const{"int"}}})
+	env.Declare("someintoption", &types.App{Const: option, Args: []types.Type{&types.Const{"int"}}})
 
-	expr := &ast.Call{
+	var expr ast.Expr = &ast.Call{
 		Func: &ast.Var{Name: "fmap"},
-		Args: []ast.Expr{&ast.Var{Name: "itoa"}, &ast.Var{Name: "someintlist"}},
+		Args: []ast.Expr{&ast.Var{Name: "itoa"}, &ast.Var{Name: "someintoption"}},
 	}
 	ty, err := ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	typeString := types.TypeString(ty)
-	if typeString != "List[string]" {
+	if typeString != "Option[string]" {
+		t.Fatalf("type: %s", typeString)
+	}
+
+	expr = &ast.Call{
+		Func: &ast.Var{Name: "(>>=)"},
+		Args: []ast.Expr{
+			&ast.Var{Name: "someintoption"},
+			&ast.Func{
+				ArgNames: []string{"i"},
+				Body: &ast.Call{
+					Func: &ast.Var{Name: "pure"},
+					Args: []ast.Expr{
+						&ast.Call{Func: &ast.Var{Name: "itoa"}, Args: []ast.Expr{&ast.Var{Name: "i"}}},
+					},
+				},
+			},
+		},
+	}
+	if ast.ExprString(expr) != "(>>=)(someintoption, fn (i) -> pure(itoa(i)))" {
+		t.Fatalf("expr: %s", ast.ExprString(expr))
+	}
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeString = types.TypeString(ty)
+	if typeString != "Option[string]" {
 		t.Fatalf("type: %s", typeString)
 	}
 
@@ -361,56 +471,6 @@ func TestFunctors(t *testing.T) {
 		t.Fatalf("expected invalid-instance error")
 	}
 
-	// class (Functor 'f) => Applicative 'f where
-	//   pure  :: 'a -> 'f['a]
-	//   (<*>) :: ('f[('a -> 'b)], 'f['a]) -> 'f['b]
-	Applicative, err := env.DeclareTypeClass("Applicative", func(f *types.Var) types.MethodSet {
-		a, b := env.NewGenericVar(), env.NewGenericVar()
-		f.AddConstraint(Functor)
-		return types.MethodSet{
-			"pure": &types.Arrow{
-				Args:   []types.Type{a},
-				Return: &types.App{Const: f, Args: []types.Type{a}},
-			},
-			"<*>": &types.Arrow{
-				Args: []types.Type{
-					&types.App{Const: f, Args: []types.Type{&types.Arrow{Args: []types.Type{a}, Return: b}}},
-					&types.App{Const: f, Args: []types.Type{a}},
-				},
-				Return: &types.App{Const: f, Args: []types.Type{b}},
-			},
-		}
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// pure     :: 'a ->   'f['a]
-	// new_list :: 'a -> List['a]
-	//
-	// (<*>)   ::   ('f[('a -> 'b)],   'f['a]) ->   'f['b]
-	// list_ap :: (List[('a -> 'b)], List['a]) -> List['b]
-	//
-	// instance Applicative List where
-	//   pure  = new_list
-	//   (<*>) = list_ap
-	a = env.NewGenericVar()
-	env.Declare("new_list", &types.Arrow{
-		Args:   []types.Type{a},
-		Return: &types.App{Const: &types.Const{"List"}, Args: []types.Type{a}},
-	})
-	a, b = env.NewGenericVar(), env.NewGenericVar()
-	env.Declare("list_ap", &types.Arrow{
-		Args: []types.Type{
-			&types.App{Const: &types.Const{"List"}, Args: []types.Type{&types.Arrow{Args: []types.Type{a}, Return: b}}},
-			&types.App{Const: &types.Const{"List"}, Args: []types.Type{a}},
-		},
-		Return: &types.App{Const: &types.Const{"List"}, Args: []types.Type{b}},
-	})
-	if _, err := env.DeclareInstance(Applicative, &types.Const{"List"}, map[string]string{"pure": "new_list", "<*>": "list_ap"}); err != nil {
-		t.Fatal(err)
-	}
-
 	// bad applicative (Vec is not declared as a Functor instance)
 	a = env.NewGenericVar()
 	env.Declare("new_vec", &types.Arrow{
@@ -425,7 +485,7 @@ func TestFunctors(t *testing.T) {
 		},
 		Return: &types.App{Const: &types.Const{"Vec"}, Args: []types.Type{b}},
 	})
-	if _, err := env.DeclareInstance(Applicative, &types.Const{"Vec"}, map[string]string{"pure": "new_vec", "<*>": "vec_ap"}); err == nil {
+	if _, err := env.DeclareInstance(Applicative, &types.Const{"Vec"}, map[string]string{"pure": "new_vec", "(<*>)": "vec_ap"}); err == nil {
 		t.Fatalf("expected invalid-instance error")
 	}
 }

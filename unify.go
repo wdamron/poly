@@ -143,15 +143,16 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 			if len(aConstraints) != 0 {
 				if bIsVar {
 					bConstraints := bv.Constraints()
-					// propagate instance constraints to the link target
+					// merge instance constraints into the link target
 					if ctx.speculate {
+						// don't modify the existing slice of constraints
 						ctx.stashLink(bv)
-						bConstraints2 := make([]types.InstanceConstraint, len(aConstraints)+len(bConstraints))
-						copy(bConstraints2, aConstraints)
-						copy(bConstraints2[len(aConstraints):], bConstraints)
-						bv.SetConstraints(bConstraints2)
-					} else {
-						bv.SetConstraints(append(bConstraints, aConstraints...))
+						bConstraintsTmp := make([]types.InstanceConstraint, len(bConstraints), len(bConstraints)+len(aConstraints))
+						copy(bConstraintsTmp, bConstraints)
+						bv.SetConstraints(bConstraintsTmp)
+					}
+					for _, c := range aConstraints {
+						bv.AddConstraint(c)
 					}
 					a.SetConstraints(nil)
 				} else {

@@ -113,8 +113,17 @@ func (tv *Var) SetLink(t Type) { tv.link, tv.level = t, LinkVarLevel }
 func (tv *Var) SetConstraints(constraints []InstanceConstraint) { tv.constraints = constraints }
 
 // Constrain the type-variable to types which implement a type-class.
-func (tv *Var) AddConstraint(tc *TypeClass) {
-	tv.constraints = append(tv.constraints, InstanceConstraint{TypeClass: tc})
+func (tv *Var) AddConstraint(constraint InstanceConstraint) {
+	for i, existing := range tv.constraints {
+		if existing.TypeClass.Name == constraint.TypeClass.Name || existing.TypeClass.HasSuperClass(constraint.TypeClass.Name) {
+			return
+		}
+		if constraint.TypeClass.HasSuperClass(existing.TypeClass.Name) {
+			tv.constraints[i] = constraint
+			return
+		}
+	}
+	tv.constraints = append(tv.constraints, constraint)
 }
 
 // Flatten a chain of linked type-variables. Predicates for type-variables with qualified types

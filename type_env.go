@@ -76,7 +76,9 @@ func (e *TypeEnv) NewGenericVar() *types.Var { return types.NewGenericVar(e.fres
 // Create a qualified type-variable with a unique id.
 func (e *TypeEnv) NewQualifiedVar(constraints ...types.InstanceConstraint) *types.Var {
 	tv := types.NewGenericVar(e.freshId())
-	tv.SetConstraints(constraints)
+	for _, c := range constraints {
+		tv.AddConstraint(c)
+	}
 	return tv
 }
 
@@ -117,7 +119,7 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 		e.Types[name] = &types.Method{TypeClass: tc, Name: name, Flags: arrow.Flags}
 	}
 	if param.IsGeneric() {
-		param.AddConstraint(tc)
+		param.AddConstraint(types.InstanceConstraint{tc})
 	} else {
 		tc.Param = types.RealType(tc.Param)
 	}
@@ -137,11 +139,19 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 		return nil, errors.New("Unsupported function instance for type-class " + tc.Name)
 	}
 	// prevent overlapping instances:
-	overlap := tc.FindInstanceFromRoots(func(inst *types.Instance) bool {
-		return e.common.canUnify(e.common.instantiate(0, param), e.common.instantiate(0, inst.Param))
+	var conflict *types.Instance
+	tc.FindInstanceFromRoots(func(inst *types.Instance) bool {
+		if !e.common.canUnify(e.common.instantiate(0, param), e.common.instantiate(0, inst.Param)) {
+			return false
+		}
+		if inst.TypeClass.HasSuperClass(tc.Name) || tc.HasSuperClass(inst.TypeClass.Name) {
+			return false
+		}
+		conflict = inst
+		return true
 	})
-	if overlap {
-		return nil, errors.New("Found overlapping instance for type-class " + tc.Name)
+	if conflict != nil {
+		return nil, errors.New("Found overlapping instance for type-class " + tc.Name + " at " + conflict.TypeClass.Name + " instance " + types.TypeString(conflict.Param))
 	}
 
 	impls := make(types.MethodSet, len(methodNames))
@@ -161,8 +171,7 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 		e.common.init()
 	}
 	param = forceGeneralize(-1, param)
-	inst := tc.AddInstance(param, impls)
-	inst.MethodNames = methodNames
+	inst := tc.AddInstance(param, impls, methodNames)
 	seen := util.NewDedupeMap()
 	err := e.checkSatisfies(tc, param, impls, seen)
 	seen.Release()
