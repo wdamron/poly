@@ -67,6 +67,9 @@ func (e *TypeEnv) freshId() int {
 	return id
 }
 
+// Create a unbound type-variable with a unique id at a given binding-level.
+func (e *TypeEnv) NewVar(level int) *types.Var { return types.NewVar(e.freshId(), level) }
+
 // Create a generic type-variable with a unique id.
 func (e *TypeEnv) NewGenericVar() *types.Var { return types.NewGenericVar(e.freshId()) }
 
@@ -78,7 +81,11 @@ func (e *TypeEnv) NewQualifiedVar(constraints ...types.InstanceConstraint) *type
 }
 
 // Declare a type for an identifier within the type environment.
-func (e *TypeEnv) Declare(name string, t types.Type) { e.Types[name] = generalize(-1, t) }
+func (e *TypeEnv) Declare(name string, t types.Type) { e.Types[name] = forceGeneralize(-1, t) }
+
+// Declare a weakly-generalized type for an identifier within the type environment.
+// Type-variables contained within mutable reference-types will not be generalized.
+func (e *TypeEnv) DeclareWeak(name string, t types.Type) { e.Types[name] = generalize(-1, t) }
 
 // Lookup the type for an identifier in the environment or its parent environment(s).
 func (e *TypeEnv) Lookup(name string) (types.Type, bool) {
@@ -103,9 +110,9 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 		}
 	}
 	generalizedMethods := make(types.MethodSet, len(methods))
-	tc := types.NewTypeClass(name, generalize(-1, param), generalizedMethods)
+	tc := types.NewTypeClass(name, forceGeneralize(-1, param), generalizedMethods)
 	for name, arrow := range methods {
-		arrow = generalize(-1, arrow).(*types.Arrow)
+		arrow = forceGeneralize(-1, arrow).(*types.Arrow)
 		generalizedMethods[name] = arrow
 		e.Types[name] = &types.Method{TypeClass: tc, Name: name, Flags: arrow.Flags}
 	}
@@ -153,7 +160,7 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 		e.common = &commonContext{}
 		e.common.init()
 	}
-	param = generalize(-1, param)
+	param = forceGeneralize(-1, param)
 	inst := tc.AddInstance(param, impls)
 	inst.MethodNames = methodNames
 	seen := util.NewDedupeMap()

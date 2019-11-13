@@ -24,8 +24,10 @@ package types
 
 // Special binding-levels (used as flags):
 const (
-	GenericVarLevel = 1<<31 - 1
-	LinkVarLevel    = -1 << 31
+	GenericVarLevel = -1 << 31
+	LinkVarLevel    = (-1 << 31) + 1
+	// Type-variables within mutable reference-types may not be generalized
+	WeakVarLevel = (-1 << 31) + 2
 )
 
 // Type-variable
@@ -46,6 +48,8 @@ const (
 	LinkVar
 	// Generic type-variable
 	GenericVar
+	// Weak type-variable (within a mutable reference-type)
+	WeakVar
 )
 
 // Create a new type-variable with the given id and binding-level.
@@ -65,6 +69,8 @@ func (tv *Var) VarType() VarType {
 		return LinkVar
 	case GenericVarLevel:
 		return GenericVar
+	case WeakVarLevel:
+		return WeakVar
 	default:
 		return UnboundVar
 	}
@@ -82,12 +88,16 @@ func (tv *Var) Level() int { return int(tv.level) }
 // Link returns the type which the type-variable is bound to, if the type-variable is bound.
 func (tv *Var) Link() Type { return tv.link }
 
-func (tv *Var) IsUnboundVar() bool { return tv.level != LinkVarLevel && tv.level != GenericVarLevel }
+func (tv *Var) IsUnboundVar() bool { return tv.level > LinkVarLevel }
 func (tv *Var) IsLinkVar() bool    { return tv.level == LinkVarLevel }
 func (tv *Var) IsGenericVar() bool { return tv.level == GenericVarLevel }
+func (tv *Var) IsWeakVar() bool    { return tv.level == WeakVarLevel }
 
 // Set the binding-level of the type-variable to the generic level.
 func (tv *Var) SetGeneric() { tv.level = GenericVarLevel }
+
+// Set the binding-level of the type-variable to the weak level. Weak type-variables may not be generalized.
+func (tv *Var) SetWeak() { tv.level = WeakVarLevel }
 
 // Set the unique identifier of the type-variable.
 func (tv *Var) SetId(id int) { tv.id = int32(id) }

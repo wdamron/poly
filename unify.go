@@ -163,10 +163,7 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 						}
 						seen[c.TypeClass.Name] = true
 						found := c.TypeClass.FindInstance(func(inst *types.Instance) (found bool) {
-							if err := ctx.tryUnify(b, ctx.instantiate(a.Level(), inst.Param)); err != nil {
-								return false
-							}
-							return true
+							return ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param))
 						})
 						if !found {
 							seen.Release()

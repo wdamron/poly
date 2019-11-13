@@ -104,25 +104,23 @@ func TestRefs(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	expr := &ast.RecordExtend{
-		Labels: []ast.LabelValue{
-			{"id", &ast.Func{ArgNames: []string{"x"}, Body: &ast.Var{Name: "x"}}},
-		},
-	}
-	ty, err := ctx.Infer(expr, env)
+	a := env.NewVar(-1)
+	env.DeclareWeak("r", types.NewRef(a))
+	ty, err := ctx.Infer(&ast.Var{Name: "r"}, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	typeString := types.TypeString(ty)
-	if typeString != "{id : 'a -> 'a}" {
-		t.Fatalf("unexpected type string: %s", typeString)
+	if typeString != "ref['_0]" {
+		t.Fatalf("types within references should not be generalized: %s", typeString)
 	}
 
-	env.Declare("someref", &types.Ref{Deref: &types.Const{"int"}})
-	expr = &ast.RecordExtend{
+	a = env.NewGenericVar()
+	env.Declare("new", &types.Arrow{Return: types.NewRef(a)})
+	expr := &ast.RecordExtend{
 		Labels: []ast.LabelValue{
 			{"id", &ast.Func{ArgNames: []string{"x"}, Body: &ast.Var{Name: "x"}}},
-			{"r", &ast.Var{Name: "someref"}},
+			{"r", &ast.Call{Func: &ast.Var{Name: "new"}}},
 		},
 	}
 	ty, err = ctx.Infer(expr, env)
@@ -130,10 +128,16 @@ func TestRefs(t *testing.T) {
 		t.Fatal(err)
 	}
 	typeString = types.TypeString(ty)
-	if typeString != "{id : '_0 -> '_0, r : ref[int]}" {
-		t.Fatalf("types containing references should not be generalized: %s", typeString)
+	if typeString != "{id : 'a -> 'a, r : ref['_3]}" {
+		t.Fatalf("types within references should not be generalized: %s", typeString)
 	}
 
+	if !ty.HasRefs() {
+		t.Fatalf("type contains a reference")
+	}
+	if !ty.IsGeneric() {
+		t.Fatalf("type contains a generic type-variable")
+	}
 }
 
 func TestRecords(t *testing.T) {
@@ -307,10 +311,41 @@ func TestFunctors(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 
+	// fmap    :: (('a -> 'b),  'f['a]) ->  'f['b]
+	// ref_map :: (('a -> 'b), ref['a]) -> ref['b]
+	//
+	// instance Functor ref where
+	//   fmap = ref_map
+	a, b = env.NewGenericVar(), env.NewGenericVar()
+	env.Declare("ref_map", &types.Arrow{
+		Args: []types.Type{
+			&types.Arrow{Args: []types.Type{a}, Return: b},
+			types.NewRef(a),
+		},
+		Return: types.NewRef(b),
+	})
+	if _, err := env.DeclareInstance(Functor, types.RefType, map[string]string{"fmap": "ref_map"}); err != nil {
+		t.Fatal(err)
+	}
+	env.Declare("someintref", types.NewRef(&types.Const{"int"}))
+	expr = &ast.Call{
+		Func: &ast.Var{Name: "fmap"},
+		Args: []ast.Expr{&ast.Var{Name: "itoa"}, &ast.Var{Name: "someintref"}},
+	}
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeString = types.TypeString(ty)
+	if typeString != "ref[string]" {
+		t.Fatalf("type: %s", typeString)
+	}
+
 	// detect invalid instances
 
 	// fmap    :: (('a -> 'b), 'f['a]) -> 'f['b]
 	// bad_map :: (('a -> 'b),  A['a]) ->  B['b]
+	//                          ^----------^
 	//
 	// instance Functor A where
 	//   fmap = bad_map
@@ -328,7 +363,7 @@ func TestFunctors(t *testing.T) {
 
 	// class (Functor 'f) => Applicative 'f where
 	//   pure  :: 'a -> 'f['a]
-	//   (<*>) :: 'f[('a -> 'b)] -> 'f['a] -> 'f['b]
+	//   (<*>) :: ('f[('a -> 'b)], 'f['a]) -> 'f['b]
 	Applicative, err := env.DeclareTypeClass("Applicative", func(f *types.Var) types.MethodSet {
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		f.AddConstraint(Functor)
@@ -353,11 +388,11 @@ func TestFunctors(t *testing.T) {
 	// pure     :: 'a ->   'f['a]
 	// new_list :: 'a -> List['a]
 	//
-	// (<*>)   ::   'f[('a -> 'b)] ->   'f['a] ->   'f['b]
-	// list_ap :: List[('a -> 'b)] -> List['a] -> List['b]
+	// (<*>)   ::   ('f[('a -> 'b)],   'f['a]) ->   'f['b]
+	// list_ap :: (List[('a -> 'b)], List['a]) -> List['b]
 	//
 	// instance Applicative List where
-	//   pure = new_list
+	//   pure  = new_list
 	//   (<*>) = list_ap
 	a = env.NewGenericVar()
 	env.Declare("new_list", &types.Arrow{

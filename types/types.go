@@ -38,17 +38,25 @@ type Type interface {
 type TypeFlags uint
 
 const (
-	// Type is a generic type-variable or contains generic type-variables
+	// TypeFlags for a type which is a generic type-variable or contains generic type-variables
 	ContainsGenericVars TypeFlags = 1
-	// Type is a mutable reference-type or contains mutable reference-types
+	// TypeFlags for a type which is a mutable reference-type or contains mutable reference-types
 	ContainsRefs TypeFlags = 2
 )
 
+// Mutable references are applications of RefType with a single parameter type.
+var RefType = &Const{"ref"}
+
+// Check if a type application is a mutable reference-type.
+func IsRefType(app *App) bool {
+	c, _ := app.Const.(*Const)
+	return c == RefType
+}
+
+func NewRef(deref Type) *App { return &App{Const: RefType, Args: []Type{deref}} }
+
 // "Var"
 func (t *Var) TypeName() string { return "Var" }
-
-// "Ref"
-func (t *Ref) TypeName() string { return "Ref" }
 
 // Name of the type-constant
 func (t *Const) TypeName() string { return t.Name }
@@ -92,52 +100,46 @@ func (t *Var) HasRefs() bool {
 	return r.HasRefs()
 }
 
-// Ref is never generic.
-func (t *Ref) IsGeneric() bool { return false }
-
-// Ref is a mutable reference-type.
-func (t *Ref) HasRefs() bool { return true }
-
 // Const is never generic.
 func (t *Const) IsGeneric() bool { return false }
 
 // Const never contains mutable reference-types.
 func (t *Const) HasRefs() bool { return false }
 
-// Check if t contains any generic types.
+// Check if t contains generic types.
 func (t *App) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
 
-// Check if t contains any mutable reference-types.
-func (t *App) HasRefs() bool { return t.Flags&ContainsRefs != 0 }
+// Check if t contains mutable reference-types.
+func (t *App) HasRefs() bool { return t.Flags&ContainsRefs != 0 || IsRefType(t) }
 
-// Check if t contains any generic types.
+// Check if t contains generic types.
 func (t *Arrow) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
 
-// Check if t contains any mutable reference-types.
+// Check if t contains mutable reference-types.
 func (t *Arrow) HasRefs() bool { return t.Flags&ContainsRefs != 0 }
 
-// Check if t contains any generic types.
+// Check if t contains generic types.
 func (t *Method) IsGeneric() bool { return t.TypeClass.Methods[t.Name].Flags&ContainsGenericVars != 0 }
 
-// Check if t contains any mutable reference-types.
+// Check if t contains mutable reference-types.
 func (t *Method) HasRefs() bool { return t.TypeClass.Methods[t.Name].Flags&ContainsRefs != 0 }
 
-// Check if t contains any generic types.
+// Check if t contains generic types.
 func (t *Record) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
 
-// Check if t contains any mutable reference-types.
+// Check if t contains mutable reference-types.
 func (t *Record) HasRefs() bool { return t.Flags&ContainsRefs != 0 }
 
-// Check if t contains any generic types.
+// Check if t contains generic types.
 func (t *Variant) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
 
-// Check if t contains any mutable reference-types.
+// Check if t contains mutable reference-types.
 func (t *Variant) HasRefs() bool { return t.Flags&ContainsRefs != 0 }
 
-// Check if t contains any generic types.
+// Check if t contains generic types.
 func (t *RowExtend) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
 
-// Check if t contains any mutable reference-types.
+// Check if t contains mutable reference-types.
 func (t *RowExtend) HasRefs() bool { return t.Flags&ContainsRefs != 0 }
 
 // RowEmpty is never generic.
@@ -149,11 +151,6 @@ func (t *RowEmpty) HasRefs() bool { return false }
 // Type constant: `int`, `bool`, etc
 type Const struct {
 	Name string
-}
-
-// Mutable reference: `ref[int]`
-type Ref struct {
-	Deref Type
 }
 
 // Type application: `list[int]`

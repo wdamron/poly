@@ -26,100 +26,113 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-func generalize(level int, t types.Type) types.Type {
-	counter := 0
-	t = visitType(0, t, types.ContainsRefs, &counter)
-	if counter > 0 {
-		// types containing mutable references must not be generalized
-		return t
-	}
-	counter = 0
-	return visitType(level, t, types.ContainsGenericVars, &counter)
+func forceGeneralize(level int, t types.Type) types.Type {
+	const weak, forceGeneralize = false, true
+	ngeneric, nref := 0, 0
+	return visitTypeVars(level, t, weak, forceGeneralize, &ngeneric, &nref)
 }
 
-func visitType(level int, t types.Type, flag types.TypeFlags, counter *int) types.Type {
+func generalize(level int, t types.Type) types.Type {
+	const weak, forceGeneralize = false, false
+	ngeneric, nref := 0, 0
+	return visitTypeVars(level, t, weak, forceGeneralize, &ngeneric, &nref)
+}
+
+func visitTypeVars(level int, t types.Type, weak, forceGeneralize bool, ngeneric, nref *int) types.Type {
 	switch t := t.(type) {
 	case *types.Var:
 		switch {
 		case t.IsUnboundVar():
-			if flag == types.ContainsGenericVars {
-				if t.Level() > level {
-					*counter++
-					t.SetGeneric()
-				}
+			if !forceGeneralize && weak {
+				t.SetWeak()
+			} else if t.Level() > level {
+				*ngeneric++
+				t.SetGeneric()
 			}
 			return t
 		case t.IsLinkVar():
-			return visitType(level, t.Link(), flag, counter)
+			return visitTypeVars(level, t.Link(), weak, forceGeneralize, ngeneric, nref)
+		case t.IsWeakVar():
+			// nothing to do
 		default:
-			if flag == types.ContainsGenericVars {
-				*counter++
-			}
+			*ngeneric++
 			return t
 		}
 
-	case *types.Ref:
-		t.Deref = visitType(level, t.Deref, flag, counter)
-		if flag == types.ContainsRefs {
-			*counter++
-		}
-		return t
-
 	case *types.App:
-		count := *counter
-		for i, arg := range t.Args {
-			t.Args[i] = visitType(level, arg, flag, counter)
+		ng, nr := *ngeneric, *nref
+		if types.IsRefType(t) {
+			*nref++
+			weak = true
 		}
-		t.Const = visitType(level, t.Const, flag, counter)
-		if *counter > count {
-			t.Flags |= flag
+		for i, arg := range t.Args {
+			t.Args[i] = visitTypeVars(level, arg, weak, forceGeneralize, ngeneric, nref)
+		}
+		t.Const = visitTypeVars(level, t.Const, weak, forceGeneralize, ngeneric, nref)
+		if *ngeneric > ng {
+			t.Flags |= types.ContainsGenericVars
+		}
+		if *nref > nr {
+			t.Flags |= types.ContainsRefs
 		}
 		return t
 
 	case *types.Arrow:
-		count := *counter
+		ng, nr := *ngeneric, *nref
 		for i, arg := range t.Args {
-			t.Args[i] = visitType(level, arg, flag, counter)
+			t.Args[i] = visitTypeVars(level, arg, weak, forceGeneralize, ngeneric, nref)
 		}
-		t.Return = visitType(level, t.Return, flag, counter)
-		if *counter > count {
-			t.Flags |= flag
+		t.Return = visitTypeVars(level, t.Return, weak, forceGeneralize, ngeneric, nref)
+		if *ngeneric > ng {
+			t.Flags |= types.ContainsGenericVars
+		}
+		if *nref > nr {
+			t.Flags |= types.ContainsRefs
 		}
 		return t
 
 	case *types.Record:
-		count := *counter
-		t.Row = visitType(level, t.Row, flag, counter)
-		if *counter > count {
-			t.Flags |= flag
+		ng, nr := *ngeneric, *nref
+		t.Row = visitTypeVars(level, t.Row, weak, forceGeneralize, ngeneric, nref)
+		if *ngeneric > ng {
+			t.Flags |= types.ContainsGenericVars
+		}
+		if *nref > nr {
+			t.Flags |= types.ContainsRefs
 		}
 		return t
 
 	case *types.Variant:
-		count := *counter
-		t.Row = visitType(level, t.Row, flag, counter)
-		if *counter > count {
-			t.Flags |= flag
+		ng, nr := *ngeneric, *nref
+		t.Row = visitTypeVars(level, t.Row, weak, forceGeneralize, ngeneric, nref)
+		if *ngeneric > ng {
+			t.Flags |= types.ContainsGenericVars
+		}
+		if *nref > nr {
+			t.Flags |= types.ContainsRefs
 		}
 		return t
 
 	case *types.RowExtend:
-		count := *counter
+		ng, nr := *ngeneric, *nref
 		m := t.Labels
 		mb := m.Builder()
 		m.Range(func(label string, ts types.TypeList) bool {
 			lb := ts.Builder()
 			ts.Range(func(i int, t types.Type) bool {
-				lb.Set(i, visitType(level, t, flag, counter))
+				lb.Set(i, visitTypeVars(level, t, weak, forceGeneralize, ngeneric, nref))
 				return true
 			})
 			mb.Set(label, lb.Build())
 			return true
 		})
-		t.Row = visitType(level, t.Row, flag, counter)
+		t.Row = visitTypeVars(level, t.Row, weak, forceGeneralize, ngeneric, nref)
 		t.Labels = mb.Build()
-		if *counter > count {
-			t.Flags |= flag
+		if *ngeneric > ng {
+			t.Flags |= types.ContainsGenericVars
+		}
+		if *nref > nr {
+			t.Flags |= types.ContainsRefs
 		}
 		return t
 	}
