@@ -20,10 +20,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package poly
+package poly_test
 
 import (
 	"testing"
+
+	. "github.com/wdamron/poly"
+	. "github.com/wdamron/poly/construct"
 
 	"github.com/wdamron/poly/ast"
 	"github.com/wdamron/poly/types"
@@ -33,43 +36,23 @@ func TestRecursiveLet(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	env.Declare("add", &types.Arrow{
-		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
-		Return: &types.Const{"int"},
-	})
+	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
 	A := env.NewGenericVar()
-	env.Declare("if", &types.Arrow{
-		Args:   []types.Type{&types.Const{"bool"}, A, A},
-		Return: A,
-	})
-	env.Declare("newbool", &types.Arrow{Return: &types.Const{"bool"}})
+	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
+	env.Declare("newbool", TArrow(nil, TConst("bool")))
 
-	expr := &ast.Func{
-		ArgNames: []string{"x"},
-		Body: &ast.Let{
-			Var: "f",
-			Value: &ast.Func{
-				ArgNames: []string{"x"},
-				Body: &ast.Call{
-					Func: &ast.Var{Name: "if"},
-					Args: []ast.Expr{
-						&ast.Call{Func: &ast.Var{Name: "newbool"}},
-						&ast.Var{Name: "x"},
-						&ast.Call{
-							Func: &ast.Var{Name: "f"},
-							Args: []ast.Expr{&ast.Call{
-								Func: &ast.Var{Name: "add"},
-								Args: []ast.Expr{&ast.Var{Name: "x"}, &ast.Var{Name: "x"}},
-							}},
-						}},
-				},
-			},
-			Body: &ast.Call{
-				Func: &ast.Var{Name: "f"},
-				Args: []ast.Expr{&ast.Var{Name: "x"}},
-			},
-		},
-	}
+	expr := Func1("x",
+		Let("f",
+			Func1("x",
+				Call(
+					Var("if"),
+					Call(Var("newbool")),
+					Var("x"),
+					Call(Var("f"), Call(Var("add"), Var("x"), Var("x"))),
+				),
+			),
+			Call(Var("f"), Var("x")),
+		))
 
 	exprString := ast.ExprString(expr)
 	if exprString != "fn (x) -> let f(x) = if(newbool(), x, f(add(x, x))) in f(x)" {
@@ -105,8 +88,8 @@ func TestRefs(t *testing.T) {
 	ctx := NewContext()
 
 	a := env.NewVar(-1)
-	env.DeclareWeak("r", types.NewRef(a))
-	ty, err := ctx.Infer(&ast.Var{Name: "r"}, env)
+	env.DeclareWeak("r", TRef(a))
+	ty, err := ctx.Infer(Var("r"), env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,13 +99,8 @@ func TestRefs(t *testing.T) {
 	}
 
 	a = env.NewGenericVar()
-	env.Declare("new", &types.Arrow{Return: types.NewRef(a)})
-	expr := &ast.RecordExtend{
-		Labels: []ast.LabelValue{
-			{"id", &ast.Func{ArgNames: []string{"x"}, Body: &ast.Var{Name: "x"}}},
-			{"r", &ast.Call{Func: &ast.Var{Name: "new"}}},
-		},
-	}
+	env.Declare("new", TArrow(nil, TRef(a)))
+	expr := RecordExtend(nil, LabelValue("id", Func1("x", Var("x"))), LabelValue("r", Call(Var("new"))))
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -144,20 +122,12 @@ func TestRecords(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	env.Declare("a", &types.Const{"A"})
-	env.Declare("b", &types.Const{"B"})
+	env.Declare("a", TConst("A"))
+	env.Declare("b", TConst("B"))
 
-	record := &ast.RecordExtend{
-		Labels: []ast.LabelValue{
-			{"a", &ast.Var{Name: "a"}},
-			{"b", &ast.Var{Name: "b"}},
-		},
-	}
+	record := RecordExtend(nil, LabelValue("a", Var("a")), LabelValue("b", Var("b")))
 
-	var expr ast.Expr = &ast.RecordSelect{
-		Label:  "a",
-		Record: record,
-	}
+	var expr ast.Expr = RecordSelect(record, "a")
 
 	ty, err := ctx.Infer(expr, env)
 	if err != nil {
@@ -168,10 +138,7 @@ func TestRecords(t *testing.T) {
 		t.Fatalf("expected A, found %s", typeString)
 	}
 
-	expr = &ast.RecordRestrict{
-		Label:  "a",
-		Record: record,
-	}
+	expr = RecordRestrict(record, "a")
 
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
@@ -187,30 +154,20 @@ func TestVariantMatch(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	env.Declare("add", &types.Arrow{
-		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
-		Return: &types.Const{"int"},
-	})
-	env.Declare("newint", &types.Arrow{Return: &types.Const{"int"}})
-	env.Declare("newbool", &types.Arrow{Return: &types.Const{"bool"}})
+	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
+	env.Declare("newint", TArrow(nil, TConst("int")))
+	env.Declare("newbool", TArrow(nil, TConst("bool")))
 
-	fnExpr := &ast.Func{
-		ArgNames: []string{"x", "y"},
-		Body: &ast.Match{
-			Value: &ast.Var{Name: "x"},
-			Cases: []ast.MatchCase{
-				{Label: "a", Var: "i", Value: &ast.Call{
-					Func: &ast.Var{Name: "add"},
-					Args: []ast.Expr{&ast.Var{Name: "i"}, &ast.Var{Name: "i"}},
-				}},
-				{Label: "b", Var: "i", Value: &ast.Call{
-					Func: &ast.Var{Name: "add"},
-					Args: []ast.Expr{&ast.Var{Name: "i"}, &ast.Var{Name: "i"}},
-				}},
-				{Label: "c", Var: "_", Value: &ast.Var{Name: "y"}},
+	fnExpr := Func2("x", "y",
+		Match(
+			Var("x"),
+			[]ast.MatchCase{
+				{Label: "a", Var: "i", Value: Call(Var("add"), Var("i"), Var("i"))},
+				{Label: "b", Var: "i", Value: Call(Var("add"), Var("i"), Var("i"))},
+				{Label: "c", Var: "_", Value: Var("y")},
 			},
-		},
-	}
+			nil,
+		))
 
 	exprString := ast.ExprString(fnExpr)
 	if exprString != "fn (x, y) -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y }" {
@@ -229,16 +186,10 @@ func TestVariantMatch(t *testing.T) {
 
 	// Call:
 
-	newint := &ast.Call{Func: &ast.Var{Name: "newint"}}
-	newbool := &ast.Call{Func: &ast.Var{Name: "newbool"}}
+	newint := Call(Var("newint"))
+	newbool := Call(Var("newbool"))
 
-	callExpr := &ast.Call{
-		Func: fnExpr,
-		Args: []ast.Expr{
-			&ast.Variant{Label: "c", Value: newbool},
-			newint,
-		},
-	}
+	callExpr := Call(fnExpr, Variant("c", newbool), newint)
 
 	exprString = ast.ExprString(callExpr)
 	if exprString != "(fn (x, y) -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y })(:c newbool(), newint())" {
@@ -265,13 +216,7 @@ func TestHigherKindedTypes(t *testing.T) {
 	Functor, err := env.DeclareTypeClass("Functor", func(f *types.Var) types.MethodSet {
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
-			"fmap": &types.Arrow{
-				Args: []types.Type{
-					&types.Arrow{Args: []types.Type{a}, Return: b},
-					&types.App{Const: f, Args: []types.Type{a}},
-				},
-				Return: &types.App{Const: f, Args: []types.Type{b}},
-			},
+			"fmap": TArrow2(TArrow1(a, b), TApp(f, a), TApp(f, b)),
 		}
 	})
 	if err != nil {
@@ -284,17 +229,8 @@ func TestHigherKindedTypes(t *testing.T) {
 	Applicative, err := env.DeclareTypeClass("Applicative", func(f *types.Var) types.MethodSet {
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
-			"pure": &types.Arrow{
-				Args:   []types.Type{a},
-				Return: &types.App{Const: f, Args: []types.Type{a}},
-			},
-			"(<*>)": &types.Arrow{
-				Args: []types.Type{
-					&types.App{Const: f, Args: []types.Type{&types.Arrow{Args: []types.Type{a}, Return: b}}},
-					&types.App{Const: f, Args: []types.Type{a}},
-				},
-				Return: &types.App{Const: f, Args: []types.Type{b}},
-			},
+			"pure":  TArrow1(a, TApp(f, a)),
+			"(<*>)": TArrow2(TApp(f, TArrow1(a, b)), TApp(f, a), TApp(f, b)),
 		}
 	}, Functor) // extends/subsumes Functor
 	if err != nil {
@@ -306,13 +242,7 @@ func TestHigherKindedTypes(t *testing.T) {
 	Monad, err := env.DeclareTypeClass("Monad", func(m *types.Var) types.MethodSet {
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
-			"(>>=)": &types.Arrow{
-				Args: []types.Type{
-					&types.App{Const: m, Args: []types.Type{a}},
-					&types.Arrow{Args: []types.Type{a}, Return: &types.App{Const: m, Args: []types.Type{b}}},
-				},
-				Return: &types.App{Const: m, Args: []types.Type{b}},
-			},
+			"(>>=)": TArrow2(TApp(m, a), TArrow1(a, TApp(m, b)), TApp(m, b)),
 		}
 	}, Applicative) // extends/subsumes Applicative
 	if err != nil {
@@ -336,35 +266,14 @@ func TestHigherKindedTypes(t *testing.T) {
 	//   pure  = some
 	//   (<*>) = option_ap
 	//   (>>=) = option_bind
-	a, b, option := env.NewGenericVar(), env.NewGenericVar(), &types.Const{"Option"}
-	env.Declare("option_map", &types.Arrow{
-		Args: []types.Type{
-			&types.Arrow{Args: []types.Type{a}, Return: b},
-			&types.App{Const: option, Args: []types.Type{a}},
-		},
-		Return: &types.App{Const: option, Args: []types.Type{b}},
-	})
+	a, b, option := env.NewGenericVar(), env.NewGenericVar(), TConst("Option")
+	env.Declare("option_map", TArrow2(TArrow1(a, b), TApp(option, a), TApp(option, b)))
 	a = env.NewGenericVar()
-	env.Declare("some", &types.Arrow{
-		Args:   []types.Type{a},
-		Return: &types.App{Const: option, Args: []types.Type{a}},
-	})
+	env.Declare("some", TArrow1(a, TApp(option, a)))
 	a, b = env.NewGenericVar(), env.NewGenericVar()
-	env.Declare("option_ap", &types.Arrow{
-		Args: []types.Type{
-			&types.App{Const: option, Args: []types.Type{&types.Arrow{Args: []types.Type{a}, Return: b}}},
-			&types.App{Const: option, Args: []types.Type{a}},
-		},
-		Return: &types.App{Const: option, Args: []types.Type{b}},
-	})
+	env.Declare("option_ap", TArrow2(TApp(option, TArrow1(a, b)), TApp(option, a), TApp(option, b)))
 	a, b = env.NewGenericVar(), env.NewGenericVar()
-	env.Declare("option_bind", &types.Arrow{
-		Args: []types.Type{
-			&types.App{Const: option, Args: []types.Type{a}},
-			&types.Arrow{Args: []types.Type{a}, Return: &types.App{Const: option, Args: []types.Type{b}}},
-		},
-		Return: &types.App{Const: option, Args: []types.Type{b}},
-	})
+	env.Declare("option_bind", TArrow2(TApp(option, a), TArrow1(a, TApp(option, b)), TApp(option, b)))
 	optionMethods := map[string]string{"fmap": "option_map", "pure": "some", "(<*>)": "option_ap", "(>>=)": "option_bind"}
 	// Declaring instances for Functor and Applicative is not strictly necessary, but should not cause errors
 	// due to overlapping instances:
@@ -378,13 +287,10 @@ func TestHigherKindedTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	env.Declare("itoa", &types.Arrow{Args: []types.Type{&types.Const{"int"}}, Return: &types.Const{"string"}})
-	env.Declare("someintoption", &types.App{Const: option, Args: []types.Type{&types.Const{"int"}}})
+	env.Declare("itoa", TArrow1(TConst("int"), TConst("string")))
+	env.Declare("someintoption", TApp(option, TConst("int")))
 
-	var expr ast.Expr = &ast.Call{
-		Func: &ast.Var{Name: "fmap"},
-		Args: []ast.Expr{&ast.Var{Name: "itoa"}, &ast.Var{Name: "someintoption"}},
-	}
+	var expr ast.Expr = Call(Var("fmap"), Var("itoa"), Var("someintoption"))
 	ty, err := ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -394,21 +300,7 @@ func TestHigherKindedTypes(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 
-	expr = &ast.Call{
-		Func: &ast.Var{Name: "(>>=)"},
-		Args: []ast.Expr{
-			&ast.Var{Name: "someintoption"},
-			&ast.Func{
-				ArgNames: []string{"i"},
-				Body: &ast.Call{
-					Func: &ast.Var{Name: "pure"},
-					Args: []ast.Expr{
-						&ast.Call{Func: &ast.Var{Name: "itoa"}, Args: []ast.Expr{&ast.Var{Name: "i"}}},
-					},
-				},
-			},
-		},
-	}
+	expr = Call(Var("(>>=)"), Var("someintoption"), Func1("i", Call(Var("pure"), Call(Var("itoa"), Var("i")))))
 	if ast.ExprString(expr) != "(>>=)(someintoption, fn (i) -> pure(itoa(i)))" {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
@@ -427,21 +319,12 @@ func TestHigherKindedTypes(t *testing.T) {
 	// instance Functor ref where
 	//   fmap = ref_map
 	a, b = env.NewGenericVar(), env.NewGenericVar()
-	env.Declare("ref_map", &types.Arrow{
-		Args: []types.Type{
-			&types.Arrow{Args: []types.Type{a}, Return: b},
-			types.NewRef(a),
-		},
-		Return: types.NewRef(b),
-	})
+	env.Declare("ref_map", TArrow2(TArrow1(a, b), TRef(a), TRef(b)))
 	if _, err := env.DeclareInstance(Functor, types.RefType, map[string]string{"fmap": "ref_map"}); err != nil {
 		t.Fatal(err)
 	}
-	env.Declare("someintref", types.NewRef(&types.Const{"int"}))
-	expr = &ast.Call{
-		Func: &ast.Var{Name: "fmap"},
-		Args: []ast.Expr{&ast.Var{Name: "itoa"}, &ast.Var{Name: "someintref"}},
-	}
+	env.Declare("someintref", TRef(TConst("int")))
+	expr = Call(Var("fmap"), Var("itoa"), Var("someintref"))
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -460,32 +343,17 @@ func TestHigherKindedTypes(t *testing.T) {
 	// instance Functor A where
 	//   fmap = bad_map
 	a, b = env.NewGenericVar(), env.NewGenericVar()
-	env.Declare("bad_map", &types.Arrow{
-		Args: []types.Type{
-			&types.Arrow{Args: []types.Type{a}, Return: b},
-			&types.App{Const: &types.Const{"A"}, Args: []types.Type{a}},
-		},
-		Return: &types.App{Const: &types.Const{"B"}, Args: []types.Type{b}},
-	})
-	if _, err = env.DeclareInstance(Functor, &types.Const{"A"}, map[string]string{"fmap": "bad_map"}); err == nil {
+	env.Declare("bad_map", TArrow2(TArrow1(a, b), TApp(TConst("A"), a), TApp(TConst("B"), b)))
+	if _, err = env.DeclareInstance(Functor, TConst("A"), map[string]string{"fmap": "bad_map"}); err == nil {
 		t.Fatalf("expected invalid-instance error")
 	}
 
 	// bad applicative (Vec is not declared as a Functor instance)
 	a = env.NewGenericVar()
-	env.Declare("new_vec", &types.Arrow{
-		Args:   []types.Type{a},
-		Return: &types.App{Const: &types.Const{"Vec"}, Args: []types.Type{a}},
-	})
+	env.Declare("new_vec", TArrow1(a, TApp(TConst("Vec"), a)))
 	a, b = env.NewGenericVar(), env.NewGenericVar()
-	env.Declare("vec_ap", &types.Arrow{
-		Args: []types.Type{
-			&types.App{Const: &types.Const{"Vec"}, Args: []types.Type{&types.Arrow{Args: []types.Type{a}, Return: b}}},
-			&types.App{Const: &types.Const{"Vec"}, Args: []types.Type{a}},
-		},
-		Return: &types.App{Const: &types.Const{"Vec"}, Args: []types.Type{b}},
-	})
-	if _, err := env.DeclareInstance(Applicative, &types.Const{"Vec"}, map[string]string{"pure": "new_vec", "(<*>)": "vec_ap"}); err == nil {
+	env.Declare("vec_ap", TArrow2(TApp(TConst("Vec"), TArrow1(a, b)), TApp(TConst("Vec"), a), TApp(TConst("Vec"), b)))
+	if _, err := env.DeclareInstance(Applicative, TConst("Vec"), map[string]string{"pure": "new_vec", "(<*>)": "vec_ap"}); err == nil {
 		t.Fatalf("expected invalid-instance error")
 	}
 }
@@ -496,49 +364,43 @@ func TestConstraints(t *testing.T) {
 
 	// type hierarchy
 
-	intType := &types.Const{"int"}
-	shortType := &types.Const{"short"}
-	floatType := &types.Const{"float"}
-	boolType := &types.Const{"bool"}
+	intType := TConst("int")
+	shortType := TConst("short")
+	floatType := TConst("float")
+	boolType := TConst("bool")
 
-	intVecType := &types.App{
-		Const: &types.Const{"vec"},
-		Args:  []types.Type{intType},
-	}
+	intVecType := TApp(TConst("vec"), intType)
 
 	Add, err := env.DeclareTypeClass("Add", func(param *types.Var) types.MethodSet {
 		return types.MethodSet{
-			"+": &types.Arrow{Args: []types.Type{param, param}, Return: param},
+			"+": TArrow2(param, param, param),
 		}
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	adderVecType := &types.App{
-		Const: &types.Const{"vec"},
-		Args:  []types.Type{env.NewQualifiedVar(types.InstanceConstraint{Add})},
-	}
+	adderVecType := TApp(TConst("vec"), env.NewQualifiedVar(types.InstanceConstraint{Add}))
 	if types.TypeString(adderVecType) != "Add 'a => vec['a]" {
 		t.Fatalf("invalid vec string: %s", types.TypeString(adderVecType))
 	}
 
 	Int, err := env.DeclareTypeClass("Int", func(param *types.Var) types.MethodSet {
 		return types.MethodSet{
-			"&": &types.Arrow{Args: []types.Type{param, param}, Return: param},
+			"&": TArrow2(param, param, param),
 		}
 	}, Add) // implements/subsumes Add
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	env.Declare("int_add", &types.Arrow{Args: []types.Type{intType, intType}, Return: intType})
-	env.Declare("int_and", &types.Arrow{Args: []types.Type{intType, intType}, Return: intType})
-	env.Declare("short_add", &types.Arrow{Args: []types.Type{shortType, shortType}, Return: shortType})
-	env.Declare("short_and", &types.Arrow{Args: []types.Type{shortType, shortType}, Return: shortType})
-	env.Declare("float_add", &types.Arrow{Args: []types.Type{floatType, floatType}, Return: floatType})
-	env.Declare("vec_add", &types.Arrow{Args: []types.Type{adderVecType, adderVecType}, Return: adderVecType})
-	env.Declare("int_vec_add", &types.Arrow{Args: []types.Type{intVecType, intVecType}, Return: intVecType})
-	env.Declare("bad_bool_add", &types.Arrow{Args: []types.Type{boolType, intType}, Return: boolType})
+	env.Declare("int_add", TArrow2(intType, intType, intType))
+	env.Declare("int_and", TArrow2(intType, intType, intType))
+	env.Declare("short_add", TArrow2(shortType, shortType, shortType))
+	env.Declare("short_and", TArrow2(shortType, shortType, shortType))
+	env.Declare("float_add", TArrow2(floatType, floatType, floatType))
+	env.Declare("vec_add", TArrow2(adderVecType, adderVecType, adderVecType))
+	env.Declare("int_vec_add", TArrow2(intVecType, intVecType, intVecType))
+	env.Declare("bad_bool_add", TArrow2(boolType, intType, boolType))
 
 	if _, err := env.DeclareInstance(Int, intType, map[string]string{"+": "int_add", "&": "int_and"}); err != nil {
 		t.Fatal(err)
@@ -561,25 +423,33 @@ func TestConstraints(t *testing.T) {
 	env.Declare("someint", intType)
 	env.Declare("someshort", shortType)
 	env.Declare("somefloat", floatType)
-	env.Declare("someintvec", &types.App{
-		Const: &types.Const{"vec"},
-		Args:  []types.Type{intType},
-	})
-	env.Declare("somefloatvec", &types.App{
-		Const: &types.Const{"vec"},
-		Args:  []types.Type{floatType},
-	})
-	env.Declare("someboolvec", &types.App{
-		Const: &types.Const{"vec"},
-		Args:  []types.Type{boolType},
-	})
+	env.Declare("someintvec", TApp(TConst("vec"), intType))
+	env.Declare("somefloatvec", TApp(TConst("vec"), floatType))
+	env.Declare("someboolvec", TApp(TConst("vec"), boolType))
+
+	// unions
+
+	ABC, err := env.DeclareUnionTypeClass("ABC", nil, TConst("A"), TConst("B"), TConst("C"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	abc := env.NewQualifiedVar(types.InstanceConstraint{ABC})
+	env.Declare("fabc", TArrow1(abc, abc))
+	env.Declare("somea", TConst("A"))
+
+	call := Call(Var("fabc"), Var("somea"))
+	ty, err := ctx.Infer(call, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeString := types.TypeString(ty)
+	if typeString != "A" {
+		t.Fatalf("type: %s", typeString)
+	}
 
 	// method-instance lookups
 
-	call := &ast.Call{
-		Func: &ast.Var{Name: "+"},
-		Args: []ast.Expr{&ast.Var{Name: "someint"}, &ast.Var{Name: "someint"}},
-	}
+	call = Call(Var("+"), Var("someint"), Var("someint"))
 	if err = ctx.AnnotateDirect(call, env); err != nil {
 		t.Fatal(err)
 	}
@@ -604,27 +474,18 @@ func TestConstraints(t *testing.T) {
 
 	// method/instance inference
 
-	var addWrapper ast.Expr = &ast.Func{
-		ArgNames: []string{"x", "y"},
-		Body: &ast.Call{
-			Func: &ast.Var{Name: "+"},
-			Args: []ast.Expr{&ast.Var{Name: "x"}, &ast.Var{Name: "y"}},
-		},
-	}
+	var addWrapper ast.Expr = Func2("x", "y", Call(Var("+"), Var("x"), Var("y")))
 
-	ty, err := ctx.Infer(addWrapper, env)
+	ty, err = ctx.Infer(addWrapper, env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	typeString := types.TypeString(ty)
+	typeString = types.TypeString(ty)
 	if typeString != "Add 'a => ('a, 'a) -> 'a" {
 		t.Fatalf("type: %s", typeString)
 	}
 
-	var expr ast.Expr = &ast.Call{
-		Func: addWrapper,
-		Args: []ast.Expr{&ast.Var{Name: "someint"}, &ast.Var{Name: "someint"}},
-	}
+	var expr ast.Expr = Call(addWrapper, Var("someint"), Var("someint"))
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -633,10 +494,7 @@ func TestConstraints(t *testing.T) {
 		t.Fatalf("expected int return, found " + tt.Name)
 	}
 
-	expr = &ast.Call{
-		Func: addWrapper,
-		Args: []ast.Expr{&ast.Var{Name: "someshort"}, &ast.Var{Name: "someshort"}},
-	}
+	expr = Call(addWrapper, Var("someshort"), Var("someshort"))
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -645,10 +503,7 @@ func TestConstraints(t *testing.T) {
 		t.Fatalf("expected short return, found " + tt.Name)
 	}
 
-	expr = &ast.Call{
-		Func: addWrapper,
-		Args: []ast.Expr{&ast.Var{Name: "somefloat"}, &ast.Var{Name: "somefloat"}},
-	}
+	expr = Call(addWrapper, Var("somefloat"), Var("somefloat"))
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -657,28 +512,19 @@ func TestConstraints(t *testing.T) {
 		t.Fatalf("expected float return, found " + tt.Name)
 	}
 
-	expr = &ast.Call{
-		Func: addWrapper,
-		Args: []ast.Expr{&ast.Var{Name: "someint"}, &ast.Var{Name: "somefloat"}},
-	}
+	expr = Call(addWrapper, Var("someint"), Var("somefloat"))
 	ty, err = ctx.Infer(expr, env)
 	if err == nil {
 		t.Fatalf("expected constraint error")
 	}
 
-	expr = &ast.Call{
-		Func: addWrapper,
-		Args: []ast.Expr{&ast.Var{Name: "somebool"}, &ast.Var{Name: "somebool"}},
-	}
+	expr = Call(addWrapper, Var("somebool"), Var("somebool"))
 	ty, err = ctx.Infer(expr, env)
 	if err == nil {
 		t.Fatalf("expected constraint error")
 	}
 
-	expr = &ast.Call{
-		Func: addWrapper,
-		Args: []ast.Expr{&ast.Var{Name: "someintvec"}, &ast.Var{Name: "someintvec"}},
-	}
+	expr = Call(addWrapper, Var("someintvec"), Var("someintvec"))
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -688,10 +534,7 @@ func TestConstraints(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 
-	expr = &ast.Call{
-		Func: addWrapper,
-		Args: []ast.Expr{&ast.Var{Name: "somefloatvec"}, &ast.Var{Name: "somefloatvec"}},
-	}
+	expr = Call(addWrapper, Var("somefloatvec"), Var("somefloatvec"))
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -701,19 +544,13 @@ func TestConstraints(t *testing.T) {
 		t.Fatalf("type: %s", typeString)
 	}
 
-	expr = &ast.Call{
-		Func: addWrapper,
-		Args: []ast.Expr{&ast.Var{Name: "someboolvec"}, &ast.Var{Name: "someboolvec"}},
-	}
+	expr = Call(addWrapper, Var("someboolvec"), Var("someboolvec"))
 	ty, err = ctx.Infer(expr, env)
 	if err == nil {
 		t.Fatalf("expected constraint error")
 	}
 
-	expr = &ast.Call{
-		Func: &ast.Var{Name: "&"},
-		Args: []ast.Expr{&ast.Var{Name: "someint"}, &ast.Var{Name: "someint"}},
-	}
+	expr = Call(Var("&"), Var("someint"), Var("someint"))
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -722,10 +559,7 @@ func TestConstraints(t *testing.T) {
 		t.Fatalf("expected int return, found " + tt.Name)
 	}
 
-	expr = &ast.Call{
-		Func: &ast.Var{Name: "&"},
-		Args: []ast.Expr{&ast.Var{Name: "someshort"}, &ast.Var{Name: "someshort"}},
-	}
+	expr = Call(Var("&"), Var("someshort"), Var("someshort"))
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
@@ -734,31 +568,19 @@ func TestConstraints(t *testing.T) {
 		t.Fatalf("expected short return, found " + tt.Name)
 	}
 
-	expr = &ast.Call{
-		Func: &ast.Var{Name: "&"},
-		Args: []ast.Expr{&ast.Var{Name: "somefloat"}, &ast.Var{Name: "somefloat"}},
-	}
+	expr = Call(Var("&"), Var("somebool"), Var("somebool"))
 	_, err = ctx.Infer(expr, env)
 	if err == nil {
 		t.Fatalf("expected constraint error")
 	}
 
-	expr = &ast.Call{
-		Func: &ast.Var{Name: "&"},
-		Args: []ast.Expr{&ast.Var{Name: "someint"}, &ast.Var{Name: "someshort"}},
-	}
+	expr = Call(Var("&"), Var("someint"), Var("someshort"))
 	_, err = ctx.Infer(expr, env)
 	if err == nil {
 		t.Fatalf("expected constraint error")
 	}
 
-	addWrapper = &ast.Func{
-		ArgNames: []string{"x"},
-		Body: &ast.Call{
-			Func: &ast.Var{Name: "+"},
-			Args: []ast.Expr{&ast.Var{Name: "x"}, &ast.Var{Name: "someint"}},
-		},
-	}
+	addWrapper = Func1("x", Call(Var("+"), Var("x"), Var("someint")))
 	ty, err = ctx.Infer(addWrapper, env)
 	if err != nil {
 		t.Fatal(err)
@@ -782,39 +604,30 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	env.Declare("add", &types.Arrow{
-		Args:   []types.Type{&types.Const{"int"}, &types.Const{"int"}},
-		Return: &types.Const{"int"},
-	})
+	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
 	A := env.NewGenericVar()
-	env.Declare("if", &types.Arrow{
-		Args:   []types.Type{&types.Const{"bool"}, A, A},
-		Return: A,
-	})
-	env.Declare("newbool", &types.Arrow{Return: &types.Const{"bool"}})
+	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
+	env.Declare("newbool", TArrow(nil, TConst("bool")))
 
-	newbool := &ast.Call{Func: &ast.Var{Name: "newbool"}}
-	f := &ast.Var{Name: "f"}
-	g := &ast.Var{Name: "g"}
-	h := &ast.Var{Name: "h"}
-	id := &ast.Var{Name: "id"}
-	x := &ast.Var{Name: "x"}
+	newbool := Call(Var("newbool"))
+	f := Var("f")
+	g := Var("g")
+	h := Var("h")
+	id := Var("id")
+	x := Var("x")
 
 	expr := &ast.LetGroup{
 		Vars: []ast.LetBinding{
 			{
-				Var: "id",
-				Value: &ast.Func{
-					ArgNames: []string{"x"},
-					Body:     x,
-				},
+				Var:   "id",
+				Value: Func1("x", x),
 			},
 			{
 				Var: "f",
 				Value: &ast.Func{
 					ArgNames: []string{"x"},
 					Body: &ast.Call{
-						Func: &ast.Var{Name: "if"},
+						Func: Var("if"),
 						Args: []ast.Expr{
 							&ast.Call{
 								Func: id,
@@ -827,7 +640,7 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 							&ast.Call{
 								Func: g,
 								Args: []ast.Expr{&ast.Call{
-									Func: &ast.Var{Name: "add"},
+									Func: Var("add"),
 									Args: []ast.Expr{x, x},
 								}},
 							}},
@@ -839,7 +652,7 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 				Value: &ast.Func{
 					ArgNames: []string{"x"},
 					Body: &ast.Call{
-						Func: &ast.Var{Name: "if"},
+						Func: Var("if"),
 						Args: []ast.Expr{
 							newbool,
 							x,

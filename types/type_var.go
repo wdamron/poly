@@ -115,10 +115,10 @@ func (tv *Var) SetConstraints(constraints []InstanceConstraint) { tv.constraints
 // Constrain the type-variable to types which implement a type-class.
 func (tv *Var) AddConstraint(constraint InstanceConstraint) {
 	for i, existing := range tv.constraints {
-		if existing.TypeClass.Name == constraint.TypeClass.Name || existing.TypeClass.HasSuperClass(constraint.TypeClass.Name) {
+		if existing.TypeClass.Id == constraint.TypeClass.Id || existing.TypeClass.HasSuperClass(constraint.TypeClass) {
 			return
 		}
-		if constraint.TypeClass.HasSuperClass(existing.TypeClass.Name) {
+		if constraint.TypeClass.HasSuperClass(existing.TypeClass) {
 			tv.constraints[i] = constraint
 			return
 		}

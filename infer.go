@@ -32,8 +32,8 @@ import (
 func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Type, error) {
 	switch e := e.(type) {
 	case *ast.Var:
-		t, ok := env.Lookup(e.Name)
-		if !ok {
+		t := env.Lookup(e.Name)
+		if t == nil {
 			ti.invalid, ti.err = e, errors.New("Variable "+e.Name+" not is not defined")
 			return nil, ti.err
 		}

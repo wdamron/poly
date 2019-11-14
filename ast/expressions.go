@@ -99,7 +99,7 @@ func (e *Call) FuncType() *types.Arrow { return e.inferredFunc }
 // Assign the function/method called in e. Type assignments should occur indirectly, during inference.
 func (e *Call) SetFuncType(t *types.Arrow) { e.inferredFunc = t }
 
-// Abstraction: `fun x -> x`
+// Abstraction: `fn (x, y) -> x`
 type Func struct {
 	ArgNames []string
 	Body     Expr
@@ -205,7 +205,7 @@ func (e *RecordEmpty) Type() types.Type { return types.RealType(e.inferred) }
 // Assign a type to e. Type assignments should occur indirectly, during inference.
 func (e *RecordEmpty) SetType(rt *types.Record) { e.inferred = rt }
 
-// Variant instance: `:X a`
+// Tagged (ad-hoc) variant: `:X a`
 type Variant struct {
 	Label string
 	Value Expr
@@ -214,7 +214,7 @@ type Variant struct {
 // Get the inferred (or assigned) type of e.
 func (e *Variant) Type() types.Type { return e.Value.Type() }
 
-// Pattern-matching case expression:
+// Pattern-matching case expression over tagged (ad-hoc) variant-types:
 //
 //  match e {
 //      :X a -> expr1

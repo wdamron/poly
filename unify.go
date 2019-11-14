@@ -94,18 +94,6 @@ func (ctx *commonContext) occursAdjustLevels(id, level int, t types.Type) error 
 	}
 }
 
-func (ctx *commonContext) tryUnify(a, b types.Type) error {
-	speculating := ctx.speculate
-	ctx.speculate = true
-	stashedLinks := ctx.linkStash
-	err := ctx.unify(a, b)
-	if err != nil {
-		ctx.unstashLinks(len(ctx.linkStash) - len(stashedLinks))
-	}
-	ctx.speculate, ctx.linkStash = speculating, stashedLinks
-	return err
-}
-
 func (ctx *commonContext) canUnify(a, b types.Type) bool {
 	speculating := ctx.speculate
 	ctx.speculate = true
@@ -157,12 +145,12 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 					a.SetConstraints(nil)
 				} else {
 					// evaluate instance constraints (find a matching instance for each type-class)
-					seen := util.NewDedupeMap()
+					seen := util.NewIntDedupeMap()
 					for _, c := range aConstraints {
-						if seen[c.TypeClass.Name] {
+						if seen[c.TypeClass.Id] {
 							continue
 						}
-						seen[c.TypeClass.Name] = true
+						seen[c.TypeClass.Id] = true
 						found := c.TypeClass.FindInstance(func(inst *types.Instance) (found bool) {
 							return ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param))
 						})

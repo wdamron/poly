@@ -41,6 +41,8 @@ type TypeEnv struct {
 	Parent *TypeEnv
 	// Mappings from identifiers to declared types in the current type-environment
 	Types map[string]types.Type
+	// Type-classes declared in the current type-environment
+	TypeClasses map[string]*types.TypeClass
 
 	common *commonContext
 }
@@ -83,19 +85,22 @@ func (e *TypeEnv) NewQualifiedVar(constraints ...types.InstanceConstraint) *type
 }
 
 // Declare a type for an identifier within the type environment.
+//
+// Type-variables contained within mutable reference-types will be generalized.
 func (e *TypeEnv) Declare(name string, t types.Type) { e.Types[name] = forceGeneralize(-1, t) }
 
-// Declare a weakly-generalized type for an identifier within the type environment.
+// Declare a weak/invariant type for an identifier within the type environment.
+//
 // Type-variables contained within mutable reference-types will not be generalized.
 func (e *TypeEnv) DeclareWeak(name string, t types.Type) { e.Types[name] = generalize(-1, t) }
 
 // Lookup the type for an identifier in the environment or its parent environment(s).
-func (e *TypeEnv) Lookup(name string) (types.Type, bool) {
+func (e *TypeEnv) Lookup(name string) types.Type {
 	if t, ok := e.Types[name]; ok {
-		return t, ok
+		return t
 	}
 	if e.Parent == nil {
-		return nil, false
+		return nil
 	}
 	return e.Parent.Lookup(name)
 }
@@ -103,7 +108,13 @@ func (e *TypeEnv) Lookup(name string) (types.Type, bool) {
 // Declare a parameterized type-class within the type environment.
 //
 // If the type-parameter is not linked within the bind function, an instance constraint will be added to the parameter.
+//
+// Each super-class which the type-class implements will be modified to add a sub-class entry; changes will be visible across all uses
+// of the super-classes, and changes must not be made to type-classes concurrently.
 func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.MethodSet, implements ...*types.TypeClass) (*types.TypeClass, error) {
+	if existing := e.LookupTypeClass(name); existing != nil {
+		return nil, errors.New("Type-class " + name + " is already declared")
+	}
 	param := e.NewGenericVar()
 	methods := bind(param)
 	if param.IsLinkVar() {
@@ -112,7 +123,7 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 		}
 	}
 	generalizedMethods := make(types.MethodSet, len(methods))
-	tc := types.NewTypeClass(name, forceGeneralize(-1, param), generalizedMethods)
+	tc := types.NewTypeClass(e.freshId(), name, forceGeneralize(-1, param), generalizedMethods)
 	for name, arrow := range methods {
 		arrow = forceGeneralize(-1, arrow).(*types.Arrow)
 		generalizedMethods[name] = arrow
@@ -123,10 +134,57 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 	} else {
 		tc.Param = types.RealType(tc.Param)
 	}
+	if e.TypeClasses == nil {
+		e.TypeClasses = make(map[string]*types.TypeClass)
+	}
+	e.TypeClasses[name] = tc
 	for _, super := range implements {
 		super.AddSubClass(tc)
 	}
 	return tc, nil
+}
+
+// Declare a closed union (a.k.a. sum/variant/enum) type-class within the type environment. This is a shortcut for declaring a type-class with an
+// empty method-set and no super-classes then declaring the given instances for the type-class.
+//
+// If the bind function is nil or the type-parameter is not linked within the bind function, an instance constraint will be added to the parameter.
+//
+// A union type-class represents a named/closed set of types, whereas tagged (ad-hoc) variant-types are anonymous/open sets of types.
+// Functions may be parameterized over a union type-class; only tagged (ad-hoc) variant-types may be used in (tag-based) match expressions.
+// Match expressions may offer less flexibility compared to (unification-driven) function overloading with instance constraints.
+//
+// Each super-class which the type-class implements will be modified to add a sub-class entry; changes will be visible across all uses
+// of the super-classes, and changes must not be made to type-classes concurrently.
+func (e *TypeEnv) DeclareUnionTypeClass(name string, bind func(*types.Var), instances ...types.Type) (*types.TypeClass, error) {
+	bindMethods := func(param *types.Var) types.MethodSet {
+		if bind != nil {
+			bind(param)
+		}
+		return types.MethodSet{}
+	}
+	tc, err := e.DeclareTypeClass(name, bindMethods)
+	if err != nil {
+		return nil, err
+	}
+	for _, inst := range instances {
+		if _, err := e.DeclareInstance(tc, inst, map[string]string{}); err != nil {
+			return nil, err
+		}
+	}
+	return tc, nil
+}
+
+// Lookup a declared type-class in the environment or its parent environment(s).
+func (e *TypeEnv) LookupTypeClass(name string) *types.TypeClass {
+	if e.TypeClasses != nil {
+		if tc, ok := e.TypeClasses[name]; ok {
+			return tc
+		}
+	}
+	if e.Parent == nil {
+		return nil
+	}
+	return e.Parent.LookupTypeClass(name)
 }
 
 // Declare an instance for a parameterized type-class within the type environment. The instance must implement
@@ -134,6 +192,9 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 // any other instances for the type-class.
 //
 // methodNames must map from method names to names of their implementations within the type-environment.
+//
+// The type-class which the instance implements will be modified to add an instance entry; changes will be visible across all uses
+// of the type-class, and changes must not be made to type-classes concurrently.
 func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodNames map[string]string) (*types.Instance, error) {
 	if _, isFunction := param.(*types.Arrow); isFunction {
 		return nil, errors.New("Unsupported function instance for type-class " + tc.Name)
@@ -144,7 +205,7 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 		if !e.common.canUnify(e.common.instantiate(0, param), e.common.instantiate(0, inst.Param)) {
 			return false
 		}
-		if inst.TypeClass.HasSuperClass(tc.Name) || tc.HasSuperClass(inst.TypeClass.Name) {
+		if inst.TypeClass.HasSuperClass(tc) || tc.HasSuperClass(inst.TypeClass) {
 			return false
 		}
 		conflict = inst
@@ -156,8 +217,8 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 
 	impls := make(types.MethodSet, len(methodNames))
 	for name, implName := range methodNames {
-		impl, ok := e.Lookup(implName)
-		if !ok {
+		impl := e.Lookup(implName)
+		if impl == nil {
 			return nil, errors.New("Missing method implementation " + methodNames[name] + " for " + name)
 		}
 		arrow, ok := impl.(*types.Arrow)
@@ -172,7 +233,7 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 	}
 	param = forceGeneralize(-1, param)
 	inst := tc.AddInstance(param, impls, methodNames)
-	seen := util.NewDedupeMap()
+	seen := util.NewIntDedupeMap()
 	err := e.checkSatisfies(tc, param, impls, seen)
 	seen.Release()
 	e.common.varTracker.FlattenLinks()
@@ -208,7 +269,7 @@ func (e *TypeEnv) FindMethodInstance(arrow *types.Arrow) *types.Instance {
 	return match
 }
 
-func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodImpls types.MethodSet, seen map[string]bool) error {
+func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodImpls types.MethodSet, seen util.IntDedupeMap) error {
 	for name, def := range tc.Methods {
 		impl, ok := methodImpls[name]
 		if !ok || len(def.Args) != len(impl.Args) {
@@ -218,9 +279,9 @@ func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodIm
 			return methodErr(tc, param, name)
 		}
 	}
-	seen[tc.Name] = true
-	for _, super := range tc.Super {
-		if seen[super.Name] {
+	seen[tc.Id] = true
+	for superId, super := range tc.Super {
+		if seen[superId] {
 			continue
 		}
 		if err := e.checkSatisfies(super, param, methodImpls, seen); err != nil {

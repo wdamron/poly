@@ -182,7 +182,7 @@ type Record struct {
 	Flags TypeFlags
 }
 
-// Variant type: `[...]`
+// Tagged (ad-hoc) variant-type: `[...]`
 type Variant struct {
 	Row   Type
 	Flags TypeFlags

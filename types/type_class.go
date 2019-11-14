@@ -31,11 +31,14 @@ type MethodSet map[string]*Arrow
 
 // Parameterized type-class
 type TypeClass struct {
+	// Id should be unique
+	Id int
+	// Name should be unique
 	Name      string
 	Param     Type
 	Methods   MethodSet
-	Super     map[string]*TypeClass
-	Sub       map[string]*TypeClass
+	Super     map[int]*TypeClass
+	Sub       map[int]*TypeClass
 	Instances []*Instance
 }
 
@@ -54,8 +57,8 @@ type InstanceConstraint struct {
 }
 
 // Create a new named/parameterized type-class with a set of method declarations.
-func NewTypeClass(name string, param Type, methods MethodSet) *TypeClass {
-	return &TypeClass{Name: name, Param: param, Methods: methods}
+func NewTypeClass(id int, name string, param Type, methods MethodSet) *TypeClass {
+	return &TypeClass{Id: id, Name: name, Param: param, Methods: methods}
 }
 
 // Add a super-class to the type-class. This is an alias for `super.AddSubClass(sub)`.
@@ -63,19 +66,17 @@ func (sub *TypeClass) AddSuperClass(super *TypeClass) { super.AddSubClass(sub) }
 
 // Add a sub-class to the type-class.
 func (super *TypeClass) AddSubClass(sub *TypeClass) {
-	for _, tc := range super.Sub {
-		if tc.Name == sub.Name {
-			return
-		}
+	if super.Sub != nil && super.Sub[sub.Id] != nil {
+		return
 	}
 	if sub.Super == nil {
-		sub.Super = make(map[string]*TypeClass)
+		sub.Super = make(map[int]*TypeClass)
 	}
 	if super.Sub == nil {
-		super.Sub = make(map[string]*TypeClass)
+		super.Sub = make(map[int]*TypeClass)
 	}
-	sub.Super[super.Name] = super
-	super.Sub[sub.Name] = sub
+	sub.Super[super.Id] = super
+	super.Sub[sub.Id] = sub
 }
 
 // Add an instance to the type-class with param as the type-parameter.
@@ -87,21 +88,21 @@ func (tc *TypeClass) AddInstance(param Type, methods MethodSet, methodNames map[
 	return inst
 }
 
-// Check if a type-class has a super-class with a given name.
-func (tc *TypeClass) HasSuperClass(name string) bool {
-	seen := util.NewDedupeMap()
-	found := tc.hasSuperClass(seen, name)
+// Check if a type-class is declared as a sub-class of another type-class.
+func (tc *TypeClass) HasSuperClass(super *TypeClass) bool {
+	seen := util.NewIntDedupeMap()
+	found := tc.hasSuperClass(seen, super.Id)
 	seen.Release()
 	return found
 }
 
-func (tc *TypeClass) hasSuperClass(seen map[string]bool, name string) bool {
-	seen[tc.Name] = true
-	for _, super := range tc.Super {
+func (tc *TypeClass) hasSuperClass(seen util.IntDedupeMap, id int) bool {
+	seen[tc.Id] = true
+	for superId, super := range tc.Super {
 		switch {
-		case seen[super.Name]:
+		case seen[superId]:
 			return false
-		case super.Name == name, super.hasSuperClass(seen, name):
+		case superId == id, super.hasSuperClass(seen, id):
 			return true
 		}
 	}
@@ -110,7 +111,7 @@ func (tc *TypeClass) hasSuperClass(seen map[string]bool, name string) bool {
 
 // Visit all instances for the type-class and all sub-classes. Sub-classes will be visited first.
 func (tc *TypeClass) FindInstance(found func(*Instance) bool) bool {
-	seen := util.NewDedupeMap()
+	seen := util.NewIntDedupeMap()
 	ok, _ := tc.findInstance(seen, found)
 	seen.Release()
 	return ok
@@ -118,13 +119,13 @@ func (tc *TypeClass) FindInstance(found func(*Instance) bool) bool {
 
 // Visit all instances for each of the type-class's top-most parents and all their (transitive) sub-classes. Sub-classes will be visited first.
 func (tc *TypeClass) FindInstanceFromRoots(found func(*Instance) bool) bool {
-	roots := make(map[string]*TypeClass, 32)
+	roots := make(map[int]*TypeClass, 16)
 	tc.findRoots(roots)
 	var (
 		ok             bool
 		shouldContinue bool
 	)
-	seen := util.NewDedupeMap()
+	seen := util.NewIntDedupeMap()
 	for _, root := range roots {
 		if root == nil {
 			// not a root
@@ -138,25 +139,25 @@ func (tc *TypeClass) FindInstanceFromRoots(found func(*Instance) bool) bool {
 	return ok
 }
 
-func (tc *TypeClass) findRoots(roots map[string]*TypeClass) {
-	if _, seen := roots[tc.Name]; seen {
+func (tc *TypeClass) findRoots(roots map[int]*TypeClass) {
+	if _, seen := roots[tc.Id]; seen {
 		return
 	}
 	if len(tc.Super) == 0 {
-		roots[tc.Name] = tc
+		roots[tc.Id] = tc
 		return
 	}
-	roots[tc.Name] = nil
+	roots[tc.Id] = nil
 	for _, super := range tc.Super {
 		super.findRoots(roots)
 	}
 }
 
-func (tc *TypeClass) findInstance(seen map[string]bool, found func(*Instance) bool) (ok, shouldContinue bool) {
-	if seen[tc.Name] {
+func (tc *TypeClass) findInstance(seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+	if seen[tc.Id] {
 		return false, true
 	}
-	seen[tc.Name] = true
+	seen[tc.Id] = true
 	for _, sub := range tc.Sub {
 		if ok, shouldContinue = sub.findInstance(seen, found); !shouldContinue {
 			return ok, false

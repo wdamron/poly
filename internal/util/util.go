@@ -26,22 +26,22 @@ import (
 	"sync"
 )
 
-var dedupePool = sync.Pool{
+var intDedupePool = sync.Pool{
 	New: func() interface{} {
 		// The Pool's New function should generally only return pointer
 		// types, since a pointer can be put into the return interface
 		// value without an allocation:
-		return make(DedupeMap, 32)
+		return make(IntDedupeMap, 32)
 	},
 }
 
-type DedupeMap map[string]bool
+type IntDedupeMap map[int]bool
 
-func NewDedupeMap() DedupeMap { return dedupePool.Get().(DedupeMap) }
+func NewIntDedupeMap() IntDedupeMap { return intDedupePool.Get().(IntDedupeMap) }
 
-func (dm DedupeMap) Release() {
+func (dm IntDedupeMap) Release() {
 	for k := range dm {
 		delete(dm, k)
 	}
-	dedupePool.Put(dm)
+	intDedupePool.Put(dm)
 }
