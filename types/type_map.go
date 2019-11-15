@@ -102,16 +102,22 @@ func NewTypeMapBuilder() TypeMapBuilder {
 func (b TypeMapBuilder) Len() int { return b.b.Len() }
 
 // Set the type list for the given label in the builder.
-func (b TypeMapBuilder) Set(label string, ts TypeList) { b.b.Set(label, ts.l) }
+func (b TypeMapBuilder) Set(label string, ts TypeList) TypeMapBuilder {
+	b.b.Set(label, ts.l)
+	return b
+}
 
 // Delete the given label and corresponding type list from the builder.
-func (b TypeMapBuilder) Delete(label string) { b.b.Delete(label) }
+func (b TypeMapBuilder) Delete(label string) TypeMapBuilder {
+	b.b.Delete(label)
+	return b
+}
 
 // Finalize the builder into an immutable map.
 func (b TypeMapBuilder) Build() TypeMap { return TypeMap{b.b.Map()} }
 
 // Merge entries into the builder.
-func (a TypeMapBuilder) Merge(b TypeMap) {
+func (a TypeMapBuilder) Merge(b TypeMap) TypeMapBuilder {
 	b.Range(func(label string, bts TypeList) bool {
 		ts, ok := a.b.Get(label)
 		if !ok {
@@ -126,6 +132,7 @@ func (a TypeMapBuilder) Merge(b TypeMap) {
 		a.Set(label, lb.Build())
 		return true
 	})
+	return a
 }
 
 // TypeMapIterator reads entries in a map, in sequential order.

@@ -123,6 +123,9 @@ func typeString(p *typePrinter, simple bool, t Type) {
 
 	case *App:
 		typeString(p, true, t.Const)
+		if len(t.Args) == 0 {
+			return
+		}
 		p.sb.WriteByte('[')
 		for i, arg := range t.Args {
 			if i > 0 {

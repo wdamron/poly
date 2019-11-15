@@ -26,19 +26,29 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
+// Generalize all unbound type-variables in t, excluding type-variables within mutable reference-types.
+func Generalize(t types.Type) types.Type { return generalize(-1, t) }
+
+// Generalize all unbound type-variables in t, including type-variables within mutable reference-types.
+func GeneralizeRefs(t types.Type) types.Type { return forceGeneralize(-1, t) }
+
 func forceGeneralize(level int, t types.Type) types.Type {
 	const weak, forceGeneralize = false, true
 	ngeneric, nref := 0, 0
-	return visitTypeVars(level, t, weak, forceGeneralize, &ngeneric, &nref)
+	t = types.RealType(t)
+	visitTypeVars(level, t, weak, forceGeneralize, &ngeneric, &nref)
+	return t
 }
 
 func generalize(level int, t types.Type) types.Type {
 	const weak, forceGeneralize = false, false
 	ngeneric, nref := 0, 0
-	return visitTypeVars(level, t, weak, forceGeneralize, &ngeneric, &nref)
+	t = types.RealType(t)
+	visitTypeVars(level, t, weak, forceGeneralize, &ngeneric, &nref)
+	return t
 }
 
-func visitTypeVars(level int, t types.Type, weak, forceGeneralize bool, ngeneric, nref *int) types.Type {
+func visitTypeVars(level int, t types.Type, weak, forceGeneralize bool, ngeneric, nref *int) {
 	switch t := t.(type) {
 	case *types.Var:
 		switch {
@@ -49,14 +59,11 @@ func visitTypeVars(level int, t types.Type, weak, forceGeneralize bool, ngeneric
 				*ngeneric++
 				t.SetGeneric()
 			}
-			return t
 		case t.IsLinkVar():
-			return visitTypeVars(level, t.Link(), weak, forceGeneralize, ngeneric, nref)
+			visitTypeVars(level, t.Link(), weak, forceGeneralize, ngeneric, nref)
 		case t.IsWeakVar():
-			// nothing to do
 		default:
 			*ngeneric++
-			return t
 		}
 
 	case *types.App:
@@ -65,77 +72,75 @@ func visitTypeVars(level int, t types.Type, weak, forceGeneralize bool, ngeneric
 			*nref++
 			weak = true
 		}
-		for i, arg := range t.Args {
-			t.Args[i] = visitTypeVars(level, arg, weak, forceGeneralize, ngeneric, nref)
+		for _, arg := range t.Args {
+			visitTypeVars(level, arg, weak, forceGeneralize, ngeneric, nref)
 		}
-		t.Const = visitTypeVars(level, t.Const, weak, forceGeneralize, ngeneric, nref)
+		t.Const = types.RealType(t.Const)
+		visitTypeVars(level, t.Const, weak, forceGeneralize, ngeneric, nref)
+		if t.Underlying != nil {
+			t.Underlying = types.RealType(t.Underlying)
+			visitTypeVars(level, t.Underlying, weak, forceGeneralize, ngeneric, nref)
+		}
 		if *ngeneric > ng {
 			t.Flags |= types.ContainsGenericVars
 		}
 		if *nref > nr {
 			t.Flags |= types.ContainsRefs
 		}
-		return t
 
 	case *types.Arrow:
 		ng, nr := *ngeneric, *nref
 		for i, arg := range t.Args {
-			t.Args[i] = visitTypeVars(level, arg, weak, forceGeneralize, ngeneric, nref)
+			t.Args[i] = types.RealType(arg)
+			visitTypeVars(level, t.Args[i], weak, forceGeneralize, ngeneric, nref)
 		}
-		t.Return = visitTypeVars(level, t.Return, weak, forceGeneralize, ngeneric, nref)
+		t.Return = types.RealType(t.Return)
+		visitTypeVars(level, t.Return, weak, forceGeneralize, ngeneric, nref)
 		if *ngeneric > ng {
 			t.Flags |= types.ContainsGenericVars
 		}
 		if *nref > nr {
 			t.Flags |= types.ContainsRefs
 		}
-		return t
 
 	case *types.Record:
 		ng, nr := *ngeneric, *nref
-		t.Row = visitTypeVars(level, t.Row, weak, forceGeneralize, ngeneric, nref)
+		t.Row = types.RealType(t.Row)
+		visitTypeVars(level, t.Row, weak, forceGeneralize, ngeneric, nref)
 		if *ngeneric > ng {
 			t.Flags |= types.ContainsGenericVars
 		}
 		if *nref > nr {
 			t.Flags |= types.ContainsRefs
 		}
-		return t
 
 	case *types.Variant:
 		ng, nr := *ngeneric, *nref
-		t.Row = visitTypeVars(level, t.Row, weak, forceGeneralize, ngeneric, nref)
+		t.Row = types.RealType(t.Row)
+		visitTypeVars(level, t.Row, weak, forceGeneralize, ngeneric, nref)
 		if *ngeneric > ng {
 			t.Flags |= types.ContainsGenericVars
 		}
 		if *nref > nr {
 			t.Flags |= types.ContainsRefs
 		}
-		return t
 
 	case *types.RowExtend:
 		ng, nr := *ngeneric, *nref
-		m := t.Labels
-		mb := m.Builder()
-		m.Range(func(label string, ts types.TypeList) bool {
-			lb := ts.Builder()
+		t.Labels.Range(func(label string, ts types.TypeList) bool {
 			ts.Range(func(i int, t types.Type) bool {
-				lb.Set(i, visitTypeVars(level, t, weak, forceGeneralize, ngeneric, nref))
+				visitTypeVars(level, t, weak, forceGeneralize, ngeneric, nref)
 				return true
 			})
-			mb.Set(label, lb.Build())
 			return true
 		})
-		t.Row = visitTypeVars(level, t.Row, weak, forceGeneralize, ngeneric, nref)
-		t.Labels = mb.Build()
+		t.Row = types.RealType(t.Row)
+		visitTypeVars(level, t.Row, weak, forceGeneralize, ngeneric, nref)
 		if *ngeneric > ng {
 			t.Flags |= types.ContainsGenericVars
 		}
 		if *nref > nr {
 			t.Flags |= types.ContainsRefs
 		}
-		return t
 	}
-
-	return t
 }

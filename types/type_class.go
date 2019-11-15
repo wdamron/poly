@@ -40,6 +40,13 @@ type TypeClass struct {
 	Super     map[int]*TypeClass
 	Sub       map[int]*TypeClass
 	Instances []*Instance
+
+	// partially-grouped instances for faster lookups:
+
+	tconst    map[string]*Instance
+	tappconst map[string][]*Instance
+	trow      []*Instance
+	tmisc     []*Instance
 }
 
 // Instance of a parameterized type-class
@@ -84,6 +91,24 @@ func (super *TypeClass) AddSubClass(sub *TypeClass) {
 // methodNames must map from method names to names of their implementations within the type-environment.
 func (tc *TypeClass) AddInstance(param Type, methods MethodSet, methodNames map[string]string) *Instance {
 	inst := &Instance{TypeClass: tc, Param: param, Methods: methods, MethodNames: methodNames}
+	switch param := param.(type) {
+	case *Const:
+		if tc.tconst == nil {
+			tc.tconst = make(map[string]*Instance)
+		}
+		tc.tconst[param.Name] = inst
+	case *App:
+		if c, ok := param.Const.(*Const); ok {
+			if tc.tappconst == nil {
+				tc.tappconst = make(map[string][]*Instance)
+			}
+			tc.tappconst[c.Name] = append(tc.tappconst[c.Name], inst)
+		}
+	case *RowExtend:
+		tc.trow = append(tc.trow, inst)
+	default:
+		tc.tmisc = append(tc.tmisc, inst)
+	}
 	tc.Instances = append(tc.Instances, inst)
 	return inst
 }
@@ -115,6 +140,29 @@ func (tc *TypeClass) FindInstance(found func(*Instance) bool) bool {
 	ok, _ := tc.findInstance(seen, found)
 	seen.Release()
 	return ok
+}
+
+// Visit all instances for the type-class and all sub-classes, filtered by a type-parameter. Sub-classes will be visited first.
+//
+// The type-parameter may reduce the number of instances visited in some cases, filtering out obvious non-matches.
+func (tc *TypeClass) MatchInstance(param Type, found func(*Instance) bool) (matched bool) {
+	seen := util.NewIntDedupeMap()
+	switch param := param.(type) {
+	case *Const:
+		matched, _ = tc.matchConstInstance(param.Name, seen, found)
+	case *App:
+		if c, ok := param.Const.(*Const); ok {
+			matched, _ = tc.matchAppConstInstance(c.Name, seen, found)
+		} else {
+			matched, _ = tc.matchInstance(seen, found)
+		}
+	case *RowExtend:
+		matched, _ = tc.matchRowExtendInstance(seen, found)
+	default:
+		matched, _ = tc.matchInstance(seen, found)
+	}
+	seen.Release()
+	return
 }
 
 // Visit all instances for each of the type-class's top-most parents and all their (transitive) sub-classes. Sub-classes will be visited first.
@@ -164,6 +212,81 @@ func (tc *TypeClass) findInstance(seen util.IntDedupeMap, found func(*Instance) 
 		}
 	}
 	for _, inst := range tc.Instances {
+		if found(inst) {
+			return true, false
+		}
+	}
+	return false, true
+}
+
+func (tc *TypeClass) matchInstance(seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+	if seen[tc.Id] {
+		return false, true
+	}
+	seen[tc.Id] = true
+	for _, sub := range tc.Sub {
+		if ok, shouldContinue = sub.matchInstance(seen, found); !shouldContinue {
+			return ok, false
+		}
+	}
+	for _, inst := range tc.tmisc {
+		if found(inst) {
+			return true, false
+		}
+	}
+	return false, true
+}
+
+func (tc *TypeClass) matchConstInstance(name string, seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+	if seen[tc.Id] {
+		return false, true
+	}
+	seen[tc.Id] = true
+	for _, sub := range tc.Sub {
+		if ok, shouldContinue = sub.matchConstInstance(name, seen, found); !shouldContinue {
+			return ok, false
+		}
+	}
+	if tc.tconst != nil {
+		inst := tc.tconst[name]
+		if inst != nil && found(inst) {
+			return true, false
+		}
+	}
+	return false, true
+}
+
+func (tc *TypeClass) matchAppConstInstance(name string, seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+	if seen[tc.Id] {
+		return false, true
+	}
+	seen[tc.Id] = true
+	for _, sub := range tc.Sub {
+		if ok, shouldContinue = sub.matchAppConstInstance(name, seen, found); !shouldContinue {
+			return ok, false
+		}
+	}
+	if tc.tappconst != nil {
+		for _, inst := range tc.tappconst[name] {
+			if found(inst) {
+				return true, false
+			}
+		}
+	}
+	return false, true
+}
+
+func (tc *TypeClass) matchRowExtendInstance(seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+	if seen[tc.Id] {
+		return false, true
+	}
+	seen[tc.Id] = true
+	for _, sub := range tc.Sub {
+		if ok, shouldContinue = sub.matchRowExtendInstance(seen, found); !shouldContinue {
+			return ok, false
+		}
+	}
+	for _, inst := range tc.trow {
 		if found(inst) {
 			return true, false
 		}

@@ -32,57 +32,6 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-func TestRecursiveLet(t *testing.T) {
-	env := NewTypeEnv(nil)
-	ctx := NewContext()
-
-	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
-	A := env.NewGenericVar()
-	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
-	env.Declare("newbool", TArrow(nil, TConst("bool")))
-
-	expr := Func1("x",
-		Let("f",
-			Func1("x",
-				Call(
-					Var("if"),
-					Call(Var("newbool")),
-					Var("x"),
-					Call(Var("f"), Call(Var("add"), Var("x"), Var("x"))),
-				),
-			),
-			Call(Var("f"), Var("x")),
-		))
-
-	exprString := ast.ExprString(expr)
-	if exprString != "fn (x) -> let f(x) = if(newbool(), x, f(add(x, x))) in f(x)" {
-		t.Fatalf("expr: %s", exprString)
-	}
-
-	// Infer twice to ensure state is properly reset between calls:
-
-	envCount := len(env.Types)
-
-	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(env.Types) != envCount {
-		t.Fatalf("expected unmodified type environment after inference")
-	}
-
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	typeString := types.TypeString(ty)
-	if typeString != "int -> int" {
-		t.Fatalf("type: %s", typeString)
-	}
-}
-
 func TestRefs(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
@@ -150,13 +99,195 @@ func TestRecords(t *testing.T) {
 	}
 }
 
+func TestAliases(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	a := env.NewGenericVar()
+	sliceHeader := TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
+		"data": TRef(TApp(TConst("array"), a)),
+		"len":  TConst("int"),
+		"cap":  TConst("int"),
+	})))
+	slice := Generalize(TAlias(TApp(TConst("slice"), a), sliceHeader))
+
+	intSliceHeader := TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
+		"data": TRef(TApp(TConst("array"), TConst("int"))),
+		"len":  TConst("int"),
+		"cap":  TConst("int"),
+	})))
+	intSlice := TAlias(TApp(TConst("slice"), TConst("int")), intSliceHeader)
+
+	env.Declare("append", TArrow2(slice, slice, slice))
+	env.Declare("someints", intSliceHeader)
+	env.Declare("someints2", intSlice)
+
+	ty, err := ctx.Infer(Var("someints"), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "{cap : int, data : ref[array[int]], len : int}" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	ty, err = ctx.Infer(Var("someints2"), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "slice[int]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	sel := Let("f", Func1("x", RecordSelect(Var("x"), "data")),
+		Call(Var("f"), Var("someints2")))
+
+	ty, err = ctx.Infer(sel, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "ref[array[int]]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	ty, err = ctx.Infer(Call(Var("append"), Var("someints"), Var("someints")), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "slice[int]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	ty, err = ctx.Infer(Call(Var("append"), Var("someints"), Var("someints2")), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "slice[int]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	env.Declare("someints3", TApp(TConst("slice"), TConst("int")))
+	ty, err = ctx.Infer(Call(Var("append"), Var("someints2"), Var("someints3")), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "slice[int]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+}
+
+func TestRecursiveLet(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
+	A := env.NewGenericVar()
+	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
+	env.Declare("newbool", TArrow(nil, TConst("bool")))
+
+	expr := Func1("x",
+		Let("f",
+			Func1("x",
+				Call(
+					Var("if"),
+					Call(Var("newbool")),
+					Var("x"),
+					Call(Var("f"), Call(Var("add"), Var("x"), Var("x"))),
+				),
+			),
+			Call(Var("f"), Var("x")),
+		))
+
+	if ast.ExprString(expr) != "fn (x) -> let f(x) = if(newbool(), x, f(add(x, x))) in f(x)" {
+		t.Fatalf("expr: %s", ast.ExprString(expr))
+	}
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "int -> int" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+}
+
+func TestMutuallyRecursiveLet(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
+	A := env.NewGenericVar()
+	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
+	env.Declare("somebool", TConst("bool"))
+
+	somebool := Var("somebool")
+	add := Var("add")
+	f := Var("f")
+	g := Var("g")
+	h := Var("h")
+	id := Var("id")
+	x := Var("x")
+
+	expr := LetGroup(
+		[]ast.LetBinding{
+			{"id", Func1("x", x)},
+			{"f", Func1("x", Call(Var("if"), Call(id, somebool), Call(id, x), Call(g, Call(add, x, x))))},
+			{"g", Func1("x", Call(Var("if"), somebool, x, Call(id, Call(f, x))))},
+		},
+		Let("h", Func1("x", Call(id, Call(f, x))),
+			RecordExtend(nil,
+				LabelValue("f", f),
+				LabelValue("g", g),
+				LabelValue("h", h),
+				LabelValue("id", id))))
+
+	expect := "" +
+		"let id(x) = x" +
+		" and f(x) = if(id(somebool), id(x), g(add(x, x)))" +
+		" and g(x) = if(somebool, x, id(f(x)))" +
+		" in" +
+		" let h(x) = id(f(x))" +
+		" in {f = f, g = g, h = h, id = id}"
+
+	if ast.ExprString(expr) != expect {
+		t.Fatalf("expr: %s", ast.ExprString(expr))
+	}
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "{f : int -> int, g : int -> int, h : int -> int, id : 'a -> 'a}" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+}
+
 func TestVariantMatch(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
 	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
-	env.Declare("newint", TArrow(nil, TConst("int")))
-	env.Declare("newbool", TArrow(nil, TConst("bool")))
+	env.Declare("someint", TConst("int"))
+	env.Declare("somebool", TConst("bool"))
+
+	expr := Let("f", Func1("x", Match(Var("x"),
+		[]ast.MatchCase{
+			{Label: "a", Var: "i", Value: Call(Var("f"), Variant("b", Var("i")))},
+			{Label: "b", Var: "i", Value: Call(Var("f"), Variant("c", Var("i")))},
+			{Label: "c", Var: "i", Value: Call(Var("add"), Var("i"), Var("someint"))},
+		},
+		// default case:
+		&ast.MatchCase{Var: "_", Value: Var("someint")})),
+		// let-in:
+		Var("f"))
+
+	if ast.ExprString(expr) != "let f(x) = match x { :a i -> f(:b i) | :b i -> f(:c i) | :c i -> add(i, someint) | _ -> someint } in f" {
+		t.Fatalf("expr: %s", ast.ExprString(expr))
+	}
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "[a : int, b : int, c : int | 'a] -> int" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
 
 	fnExpr := Func2("x", "y",
 		Match(
@@ -169,41 +300,30 @@ func TestVariantMatch(t *testing.T) {
 			nil,
 		))
 
-	exprString := ast.ExprString(fnExpr)
-	if exprString != "fn (x, y) -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y }" {
-		t.Fatalf("expr: %s", exprString)
+	if ast.ExprString(fnExpr) != "fn (x, y) -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y }" {
+		t.Fatalf("expr: %s", ast.ExprString(fnExpr))
 	}
-
-	ty, err := ctx.Infer(fnExpr, env)
+	ty, err = ctx.Infer(fnExpr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	typeString := types.TypeString(ty)
-	if typeString != "([a : int, b : int, c : 'a], int) -> int" {
-		t.Fatalf("type: %s", typeString)
+	if types.TypeString(ty) != "([a : int, b : int, c : 'a], int) -> int" {
+		t.Fatalf("type: %s", types.TypeString(ty))
 	}
 
 	// Call:
 
-	newint := Call(Var("newint"))
-	newbool := Call(Var("newbool"))
+	callExpr := Call(fnExpr, Variant("c", Var("somebool")), Var("someint"))
 
-	callExpr := Call(fnExpr, Variant("c", newbool), newint)
-
-	exprString = ast.ExprString(callExpr)
-	if exprString != "(fn (x, y) -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y })(:c newbool(), newint())" {
-		t.Fatalf("expr: %s", exprString)
+	if ast.ExprString(callExpr) != "(fn (x, y) -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y })(:c somebool, someint)" {
+		t.Fatalf("expr: %s", ast.ExprString(callExpr))
 	}
-
 	ty, err = ctx.Infer(callExpr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	typeString = types.TypeString(ty)
-	if typeString != "int" {
-		t.Fatalf("type: %s", typeString)
+	if types.TypeString(ty) != "int" {
+		t.Fatalf("type: %s", types.TypeString(ty))
 	}
 }
 
@@ -597,134 +717,5 @@ func TestConstraints(t *testing.T) {
 	}
 	if _, err := env.DeclareInstance(Add, boolType, map[string]string{"+": "bad_bool_add"}); err == nil {
 		t.Fatalf("expected invalid-method error")
-	}
-}
-
-func TestMutuallyRecursiveLet(t *testing.T) {
-	env := NewTypeEnv(nil)
-	ctx := NewContext()
-
-	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
-	A := env.NewGenericVar()
-	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
-	env.Declare("newbool", TArrow(nil, TConst("bool")))
-
-	newbool := Call(Var("newbool"))
-	f := Var("f")
-	g := Var("g")
-	h := Var("h")
-	id := Var("id")
-	x := Var("x")
-
-	expr := &ast.LetGroup{
-		Vars: []ast.LetBinding{
-			{
-				Var:   "id",
-				Value: Func1("x", x),
-			},
-			{
-				Var: "f",
-				Value: &ast.Func{
-					ArgNames: []string{"x"},
-					Body: &ast.Call{
-						Func: Var("if"),
-						Args: []ast.Expr{
-							&ast.Call{
-								Func: id,
-								Args: []ast.Expr{newbool},
-							},
-							&ast.Call{
-								Func: id,
-								Args: []ast.Expr{x},
-							},
-							&ast.Call{
-								Func: g,
-								Args: []ast.Expr{&ast.Call{
-									Func: Var("add"),
-									Args: []ast.Expr{x, x},
-								}},
-							}},
-					},
-				},
-			},
-			{
-				Var: "g",
-				Value: &ast.Func{
-					ArgNames: []string{"x"},
-					Body: &ast.Call{
-						Func: Var("if"),
-						Args: []ast.Expr{
-							newbool,
-							x,
-							&ast.Call{
-								Func: id,
-								Args: []ast.Expr{&ast.Call{
-									Func: f,
-									Args: []ast.Expr{x},
-								}},
-							},
-						},
-					},
-				},
-			},
-		},
-		Body: &ast.Let{
-			Var: "h",
-			Value: &ast.Func{
-				ArgNames: []string{"x"},
-				Body: &ast.Call{
-					Func: id,
-					Args: []ast.Expr{&ast.Call{
-						Func: f,
-						Args: []ast.Expr{x},
-					}},
-				},
-			},
-			Body: &ast.RecordExtend{
-				Labels: []ast.LabelValue{
-					{"f", f},
-					{"g", g},
-					{"h", h},
-					{"id", id},
-				},
-			},
-		},
-	}
-
-	exprString := ast.ExprString(expr)
-
-	expect := "" +
-		"let id(x) = x" +
-		" and f(x) = if(id(newbool()), id(x), g(add(x, x)))" +
-		" and g(x) = if(newbool(), x, id(f(x)))" +
-		" in" +
-		" let h(x) = id(f(x))" +
-		" in {f = f, g = g, h = h, id = id}"
-
-	if exprString != expect {
-		t.Fatalf("expr: %s", exprString)
-	}
-
-	// Infer twice to ensure state is properly reset between calls:
-
-	envCount := len(env.Types)
-
-	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(env.Types) != envCount {
-		t.Fatalf("expected unmodified type environment after inference")
-	}
-
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	typeString := types.TypeString(ty)
-	if typeString != "{f : int -> int, g : int -> int, h : int -> int, id : 'a -> 'a}" {
-		t.Fatalf("type: %s", typeString)
 	}
 }

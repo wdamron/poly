@@ -44,7 +44,7 @@ const (
 	ContainsRefs TypeFlags = 2
 )
 
-// Mutable references are applications of RefType with a single parameter type.
+// Mutable references are applications of RefType (a mutable reference-type) with a single referenced type-parameter.
 var RefType = &Const{"ref"}
 
 // Check if a type application is a mutable reference-type.
@@ -53,6 +53,19 @@ func IsRefType(app *App) bool {
 	return c == RefType
 }
 
+var (
+	_ Type = (*Var)(nil)
+	_ Type = (*Const)(nil)
+	_ Type = (*App)(nil)
+	_ Type = (*Arrow)(nil)
+	_ Type = (*Method)(nil)
+	_ Type = (*Record)(nil)
+	_ Type = (*Variant)(nil)
+	_ Type = (*RowExtend)(nil)
+	_ Type = (*RowEmpty)(nil)
+)
+
+// Create an application of RefType (a mutable reference-type) with a single referenced type-parameter.
 func NewRef(deref Type) *App { return &App{Const: RefType, Args: []Type{deref}} }
 
 // "Var"
@@ -157,7 +170,9 @@ type Const struct {
 type App struct {
 	Const Type
 	Args  []Type
-	Flags TypeFlags
+	// Aliased type (optional)
+	Underlying Type
+	Flags      TypeFlags
 }
 
 // Function type: `(int, int) -> int`
@@ -176,13 +191,13 @@ type Method struct {
 	Flags     TypeFlags
 }
 
-// Record type: `{...}`
+// Record type: `{a : int}`
 type Record struct {
 	Row   Type
 	Flags TypeFlags
 }
 
-// Tagged (ad-hoc) variant-type: `[...]`
+// Tagged (ad-hoc) variant-type: `[i : int, s : string]`
 type Variant struct {
 	Row   Type
 	Flags TypeFlags

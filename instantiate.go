@@ -58,7 +58,11 @@ func (ctx *commonContext) instantiateRecursive(level int, t types.Type) types.Ty
 		for i, arg := range t.Args {
 			args[i] = ctx.instantiateRecursive(level, arg)
 		}
-		return &types.App{Const: ctx.instantiateRecursive(level, t.Const), Args: args}
+		var underlying types.Type
+		if t.Underlying != nil {
+			underlying = ctx.instantiateRecursive(level, t.Underlying)
+		}
+		return &types.App{Const: ctx.instantiateRecursive(level, t.Const), Args: args, Underlying: underlying}
 
 	case *types.Arrow:
 		args := make([]types.Type, len(t.Args))
@@ -90,7 +94,13 @@ func (ctx *commonContext) instantiateRecursive(level int, t types.Type) types.Ty
 			mb.Set(label, lb.Build())
 			return true
 		})
-		return &types.RowExtend{Row: ctx.instantiateRecursive(level, t.Row), Labels: mb.Build()}
+		row := t.Row
+		if row == nil {
+			row = types.RowEmptyPointer
+		} else if _, ok := row.(*types.RowEmpty); !ok {
+			row = ctx.instantiateRecursive(level, t.Row)
+		}
+		return &types.RowExtend{Row: row, Labels: mb.Build()}
 	}
 	panic("unexpected generic type " + t.TypeName())
 }

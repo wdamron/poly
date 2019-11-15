@@ -54,6 +54,11 @@ func (ctx *commonContext) occursAdjustLevels(id, level int, t types.Type) error 
 		if err := ctx.occursAdjustLevels(id, level, t.Const); err != nil {
 			return err
 		}
+		if t.Underlying != nil {
+			if err := ctx.occursAdjustLevels(id, level, t.Underlying); err != nil {
+				return err
+			}
+		}
 		for _, arg := range t.Args {
 			if err := ctx.occursAdjustLevels(id, level, arg); err != nil {
 				return err
@@ -109,6 +114,8 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 		return nil
 	}
 
+	// unify type variables:
+
 	if a, ok := a.(*types.Var); ok {
 		switch {
 		case a.IsLinkVar():
@@ -151,13 +158,29 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 							continue
 						}
 						seen[c.TypeClass.Id] = true
-						found := c.TypeClass.FindInstance(func(inst *types.Instance) (found bool) {
-							return ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param))
-						})
-						if !found {
+						var matched *types.Instance
+						if ctx.lastInstanceMatch != nil {
+							if inst, ok := ctx.lastInstanceMatch[c.TypeClass.Id]; ok && ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param)) {
+								matched = inst
+							}
+						}
+						if matched == nil {
+							c.TypeClass.MatchInstance(b, func(inst *types.Instance) (found bool) {
+								if ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param)) {
+									matched = inst
+									return true
+								}
+								return false
+							})
+						}
+						if matched == nil {
 							seen.Release()
 							return errors.New("No matching instance found for type-class " + c.TypeClass.Name)
 						}
+						if ctx.lastInstanceMatch == nil {
+							ctx.lastInstanceMatch = make(map[int]*types.Instance)
+						}
+						ctx.lastInstanceMatch[c.TypeClass.Id] = matched
 					}
 					seen.Release()
 				}
@@ -174,6 +197,35 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 	if b, ok := b.(*types.Var); ok {
 		return ctx.unify(b, a)
 	}
+
+	// unify aliased types:
+
+	aliasA, _ := a.(*types.App)
+	aliasB, _ := b.(*types.App)
+	var underA, underB types.Type
+	if aliasA != nil && aliasA.Underlying != nil {
+		underA = aliasA.Underlying
+	}
+	if aliasB != nil && aliasB.Underlying != nil {
+		underB = aliasB.Underlying
+	}
+	switch {
+	case underA == nil && underB != nil:
+		return ctx.unify(b, a)
+	case underB != nil: // both are aliases
+		// Const and Args are unified in the main switch below
+		if err := ctx.unify(underA, underB); err != nil {
+			return err
+		}
+	case underA != nil: // only a is an alias
+		// If b is a type application, Const and Args are unified in the main switch below
+		if aliasB == nil {
+			// unify b with a's underlying type
+			return ctx.unify(underA, b)
+		}
+	}
+
+	// unify types:
 
 	switch a := a.(type) {
 	case *types.Const:
@@ -193,19 +245,22 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 			return err
 		}
 		if len(a.Args) != len(b.Args) {
-			return errors.New("Cannot unify function calls with differing arity")
+			return errors.New("Cannot unify type-applications with differing arity")
 		}
 		for i := range a.Args {
 			if err := ctx.unify(a.Args[i], b.Args[i]); err != nil {
 				return err
 			}
 		}
+		if underA != nil && aliasB != nil {
+			aliasB.Underlying = underA
+		}
 		return nil
 
 	case *types.Arrow:
 		b, ok := b.(*types.Arrow)
 		if !ok {
-			return errors.New("Failed to unify arrow with type")
+			return errors.New("Failed to unify arrow with type " + b.TypeName())
 		}
 		if len(a.Args) != len(b.Args) {
 			return errors.New("Cannot unify arrows with differing arity")
@@ -269,60 +324,43 @@ func (ctx *commonContext) unifyRows(a, b types.Type) error {
 		return err
 	}
 
+	// labels missing from ma/mb
 	xa, xb := types.NewTypeMapBuilder(), types.NewTypeMapBuilder()
 	ia, ib := ma.Iterator(), mb.Iterator()
-
-UnifyLabels:
-	for {
-		switch {
-		case ia.Done() && ib.Done():
-			break UnifyLabels
-		case ia.Done():
-			for !ib.Done() {
-				xa.Set(ib.Next())
-			}
-			break UnifyLabels
-		case ib.Done():
-			for !ia.Done() {
-				xb.Set(ia.Next())
-			}
-			break UnifyLabels
-		}
-
-		la, va := ia.Peek()
-		lb, vb := ib.Peek()
-		switch {
-		case la > lb:
-			xa.Set(lb, vb)
-			ib.Next()
-		case la < lb:
+	for !ia.Done() {
+		la, va := ia.Next()
+		if _, ok := mb.Get(la); !ok {
 			xb.Set(la, va)
-			ia.Next()
-		default:
-			ua, ub, err := ctx.unifyLists(va, vb)
-			if err != nil {
-				return err
-			}
-			if ua.Len() > 0 {
-				xb.Set(la, ua)
-			}
-			if ub.Len() > 0 {
-				xa.Set(lb, ub)
-			}
-			ia.Next()
-			ib.Next()
+		}
+	}
+	for !ib.Done() {
+		lb, vb := ib.Next()
+		va, ok := ma.Get(lb)
+		if !ok {
+			xa.Set(lb, vb)
+			continue
+		}
+		ua, ub, err := ctx.unifyLists(va, vb)
+		if err != nil {
+			return err
+		}
+		if ua.Len() > 0 {
+			xb.Set(lb, ua)
+		}
+		if ub.Len() > 0 {
+			xa.Set(lb, ub)
 		}
 	}
 
 	za, zb := xa.Len() == 0, xb.Len() == 0
 	switch {
-	case za && zb:
+	case za && zb: // all labels match
 		return ctx.unify(ra, rb)
-	case za && !zb:
+	case za && !zb: // labels missing in mb
 		return ctx.unify(rb, &types.RowExtend{Row: ra, Labels: xb.Build()})
-	case !za && zb:
+	case !za && zb: // labels missing in ma
 		return ctx.unify(ra, &types.RowExtend{Row: rb, Labels: xa.Build()})
-	default:
+	default: // labels missing in both ma/mb
 		switch ra := ra.(type) {
 		case *types.RowEmpty:
 			// will result in an error:

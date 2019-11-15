@@ -89,10 +89,15 @@ func (e *TypeEnv) NewQualifiedVar(constraints ...types.InstanceConstraint) *type
 // Type-variables contained within mutable reference-types will be generalized.
 func (e *TypeEnv) Declare(name string, t types.Type) { e.Types[name] = forceGeneralize(-1, t) }
 
-// Declare a weak/invariant type for an identifier within the type environment.
+// Declare a weakly-polymorphic type for an identifier within the type environment.
 //
 // Type-variables contained within mutable reference-types will not be generalized.
 func (e *TypeEnv) DeclareWeak(name string, t types.Type) { e.Types[name] = generalize(-1, t) }
+
+// Declare a type for an identifier within the type environment.
+//
+// Type-variables will not be generalized.
+func (e *TypeEnv) DeclareInvariant(name string, t types.Type) { e.Types[name] = t }
 
 // Lookup the type for an identifier in the environment or its parent environment(s).
 func (e *TypeEnv) Lookup(name string) types.Type {

@@ -64,6 +64,9 @@ type commonContext struct {
 	instLookup map[int]*types.Var // instantiation lookup for generic type-variables
 	speculate  bool
 
+	// cache of the most-recently matched instance by type-class id:
+	lastInstanceMatch map[int]*types.Instance
+
 	// initial space:
 	_envStash  [32]stashedType
 	_linkStash [32]stashedLink
@@ -80,11 +83,18 @@ func (ctx *commonContext) reset() {
 	}
 	ctx.envStash, ctx.linkStash = ctx._envStash[:0], ctx._linkStash[:0]
 	ctx.clearInstantiationLookup()
+	ctx.clearLastInstanceCache()
 }
 
 func (ctx *commonContext) clearInstantiationLookup() {
 	for k := range ctx.instLookup {
 		delete(ctx.instLookup, k)
+	}
+}
+
+func (ctx *commonContext) clearLastInstanceCache() {
+	for k := range ctx.lastInstanceMatch {
+		delete(ctx.lastInstanceMatch, k)
 	}
 }
 

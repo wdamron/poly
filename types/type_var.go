@@ -22,7 +22,7 @@
 
 package types
 
-// Special binding-levels (used as flags):
+// Special binding-levels for type-variables:
 const (
 	GenericVarLevel = -1 << 31
 	LinkVarLevel    = (-1 << 31) + 1

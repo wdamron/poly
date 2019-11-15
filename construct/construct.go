@@ -44,6 +44,10 @@ func TApp(constructor types.Type, args ...types.Type) *types.App {
 	return &types.App{Const: constructor, Args: args}
 }
 
+func TAlias(app *types.App, underlying types.Type) *types.App {
+	return &types.App{Const: app.Const, Args: app.Args, Underlying: underlying}
+}
+
 func TRef(deref types.Type) *types.App {
 	return types.NewRef(deref)
 }
@@ -86,6 +90,14 @@ func TVariant(row types.Type) *types.Variant {
 // Row extension: `<a : _ , b : _ | ...>`
 func TRowExtend(row types.Type, labels types.TypeMap) *types.RowExtend {
 	return &types.RowExtend{Row: row, Labels: labels}
+}
+
+func TypeMap(m map[string]types.Type) types.TypeMap {
+	b := types.NewTypeMapBuilder()
+	for label, t := range m {
+		b.Set(label, types.SingletonTypeList(t))
+	}
+	return b.Build()
 }
 
 // Empty row: `<>`
