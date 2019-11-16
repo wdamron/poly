@@ -90,7 +90,7 @@ func typeString(p *typePrinter, simple bool, t Type) {
 
 	case *Var:
 		switch {
-		case t.IsUnboundVar():
+		case t.IsWeakVar() || t.IsUnboundVar():
 			p.sb.WriteString("'_")
 			p.sb.WriteString(strconv.Itoa(t.Id()))
 
@@ -120,6 +120,9 @@ func typeString(p *typePrinter, simple bool, t Type) {
 				p.preds[t.Id()] = t.constraints
 			}
 		}
+
+	case *RecursiveLink:
+		typeString(p, false, t.Link())
 
 	case *App:
 		typeString(p, true, t.Const)

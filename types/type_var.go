@@ -24,10 +24,11 @@ package types
 
 // Special binding-levels for type-variables:
 const (
-	GenericVarLevel = -1 << 31
-	LinkVarLevel    = (-1 << 31) + 1
-	// Type-variables within mutable reference-types may not be generalized
-	WeakVarLevel = (-1 << 31) + 2
+	TopLevel        = 0
+	GenericVarLevel = 1 << 31
+	LinkVarLevel    = 1 << 30
+	// Type-variables within mutable reference-types are weakly-polymorphic and may not be generalized
+	WeakVarLevel = 1 << 29
 )
 
 // Type-variable
@@ -35,45 +36,17 @@ type Var struct {
 	constraints []InstanceConstraint
 	link        Type
 	id          int32
-	level       int32
+	level       uint32
 }
-
-// Instance of a type-variable
-type VarType int
-
-const (
-	// Unbound type-variable
-	UnboundVar VarType = iota
-	// Linked type-variable
-	LinkVar
-	// Generic type-variable
-	GenericVar
-	// Weak type-variable (within a mutable reference-type)
-	WeakVar
-)
 
 // Create a new type-variable with the given id and binding-level.
 func NewVar(id, level int) *Var {
-	return &Var{id: int32(id), level: int32(level)}
+	return &Var{id: int32(id), level: uint32(level)}
 }
 
 // Create a new generic type-variable.
 func NewGenericVar(id int) *Var {
 	return &Var{id: int32(id), level: GenericVarLevel}
-}
-
-// VarType indicates whether the type-variable is linked, unbound, or generic.
-func (tv *Var) VarType() VarType {
-	switch tv.level {
-	case LinkVarLevel:
-		return LinkVar
-	case GenericVarLevel:
-		return GenericVar
-	case WeakVarLevel:
-		return WeakVar
-	default:
-		return UnboundVar
-	}
 }
 
 // Constraints returns the set of type-classes which the type-variable must implement.
@@ -82,32 +55,45 @@ func (tv *Var) Constraints() []InstanceConstraint { return tv.constraints }
 // Id returns the unique identifier of the type-variable.
 func (tv *Var) Id() int { return int(tv.id) }
 
-// Level returns the adjusted binding-level of the type-variable.
+// Level returns the adjusted binding-level of the type-variable, with flag levels included.
 func (tv *Var) Level() int { return int(tv.level) }
+
+// Level returns the adjusted binding-level of the type-variable, with flag levels excluded.
+func (tv *Var) LevelNum() int { return int(tv.levelNum()) }
+
+func (tv *Var) levelNum() uint32 { return tv.level &^ (0xff << 24) }
 
 // Link returns the type which the type-variable is bound to, if the type-variable is bound.
 func (tv *Var) Link() Type { return tv.link }
 
-func (tv *Var) IsUnboundVar() bool { return tv.level > LinkVarLevel }
-func (tv *Var) IsLinkVar() bool    { return tv.level == LinkVarLevel }
-func (tv *Var) IsGenericVar() bool { return tv.level == GenericVarLevel }
-func (tv *Var) IsWeakVar() bool    { return tv.level == WeakVarLevel }
+func (tv *Var) IsUnboundVar() bool { return tv.level&(GenericVarLevel|LinkVarLevel) == 0 }
+func (tv *Var) IsLinkVar() bool    { return tv.level&LinkVarLevel != 0 }
+func (tv *Var) IsGenericVar() bool { return tv.level&GenericVarLevel != 0 }
+func (tv *Var) IsWeakVar() bool    { return tv.level&WeakVarLevel != 0 }
 
 // Set the binding-level of the type-variable to the generic level.
-func (tv *Var) SetGeneric() { tv.level = GenericVarLevel }
+func (tv *Var) SetGeneric() {
+	tv.level = tv.levelNum() | (tv.level & WeakVarLevel) | GenericVarLevel
+}
 
 // Set the binding-level of the type-variable to the weak level. Weak type-variables may not be generalized.
-func (tv *Var) SetWeak() { tv.level = WeakVarLevel }
+func (tv *Var) SetWeak() {
+	tv.level = tv.levelNum() | (tv.level & GenericVarLevel) | WeakVarLevel
+}
 
 // Set the unique identifier of the type-variable.
 func (tv *Var) SetId(id int) { tv.id = int32(id) }
 
-// Set the adjusted binding-level of the type-variable.
-func (tv *Var) SetLevel(level int) { tv.level = int32(level) }
+// Set the adjusted binding-level of the type-variable, with existing flags retained.
+func (tv *Var) SetLevelNum(level int) {
+	tv.level = (uint32(level) &^ (0xff << 24)) | (tv.level & 0xff << 24)
+}
 
-// Set the type which the type-variable is bound to. If the type-variable has a qualified
-// type, its predicates will be checked against the linked type.
-func (tv *Var) SetLink(t Type) { tv.link, tv.level = t, LinkVarLevel }
+// Set the type which the type-variable is bound to.
+func (tv *Var) SetLink(t Type) {
+	tv.link = t
+	tv.level = tv.levelNum() | LinkVarLevel
+}
 
 // Constrain the type-variable to types which implement a set of type-classes.
 func (tv *Var) SetConstraints(constraints []InstanceConstraint) { tv.constraints = constraints }

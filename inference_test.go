@@ -36,7 +36,7 @@ func TestRefs(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	a := env.NewVar(-1)
+	a := env.NewVar(types.TopLevel)
 	env.DeclareWeak("r", TRef(a))
 	ty, err := ctx.Infer(Var("r"), env)
 	if err != nil {
@@ -109,7 +109,7 @@ func TestAliases(t *testing.T) {
 		"len":  TConst("int"),
 		"cap":  TConst("int"),
 	})))
-	slice := Generalize(TAlias(TApp(TConst("slice"), a), sliceHeader))
+	slice := types.Generalize(TAlias(TApp(TConst("slice"), a), sliceHeader))
 
 	intSliceHeader := TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
 		"data": TRef(TApp(TConst("array"), TConst("int"))),
@@ -121,6 +121,7 @@ func TestAliases(t *testing.T) {
 	env.Declare("append", TArrow2(slice, slice, slice))
 	env.Declare("someints", intSliceHeader)
 	env.Declare("someints2", intSlice)
+	env.Declare("someints3", TApp(TConst("slice"), TConst("int")))
 
 	ty, err := ctx.Infer(Var("someints"), env)
 	if err != nil {
@@ -165,12 +166,99 @@ func TestAliases(t *testing.T) {
 		t.Fatalf("type: %s", types.TypeString(ty))
 	}
 
-	env.Declare("someints3", TApp(TConst("slice"), TConst("int")))
 	ty, err = ctx.Infer(Call(Var("append"), Var("someints2"), Var("someints3")), env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if types.TypeString(ty) != "slice[int]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+}
+
+func TestMutuallyRecursiveTypes(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	int2bool := TApp(TConst("cycle"), TConst("int"), TConst("bool"))
+	bool2int := TApp(TConst("cycle"), TConst("bool"), TConst("int"))
+	cycle, err := env.NewRecursive(func(rec *types.Recursive) {
+		int2boolidx, bool2intidx := rec.AddType(int2bool), rec.AddType(bool2int)
+		int2bool.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
+			"v":    TConst("int"),
+			"link": &types.RecursiveLink{Recursive: rec, Index: bool2intidx},
+		})))
+		bool2int.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
+			"v":    TConst("bool"),
+			"link": &types.RecursiveLink{Recursive: rec, Index: int2boolidx},
+		})))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env.Declare("someint2bool", int2bool)
+	env.Declare("cycle0", cycle.Types[0])
+
+	var expr ast.Expr = Var("someint2bool")
+
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "cycle[int, bool]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	expr = Var("cycle0")
+
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "cycle[int, bool]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	expr = Let("f", Func1("x", RecordSelect(Var("x"), "link")),
+		Call(Var("f"), Var("someint2bool")))
+
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "cycle[bool, int]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	expr = Let("f", Func1("x", RecordSelect(Var("x"), "v")),
+		Call(Var("f"), Var("someint2bool")))
+
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "int" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	expr = Let("link", RecordSelect(Var("someint2bool"), "link"),
+		RecordSelect(Var("link"), "link"))
+
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "cycle[int, bool]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	expr = RecordSelect(RecordSelect(RecordSelect(RecordSelect(Var("someint2bool"), "link"), "link"), "link"), "v")
+
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "bool" {
 		t.Fatalf("type: %s", types.TypeString(ty))
 	}
 }

@@ -80,7 +80,7 @@ func (vt *VarTracker) New(level int) *types.Var {
 	tv := &nd.head
 	vt.block = vt.block[1:]
 	tv.SetId(vt.NextId)
-	tv.SetLevel(level)
+	tv.SetLevelNum(level)
 	vt.NextId, vt.count = vt.NextId+1, vt.count+1
 	nd.tail, vt.head = vt.head, nd
 	return tv

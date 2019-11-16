@@ -84,15 +84,36 @@ func (e *TypeEnv) NewQualifiedVar(constraints ...types.InstanceConstraint) *type
 	return tv
 }
 
+// Create a new recursive type or group of mutually-recursive types.
+//
+// The bind function should add aliased types with underlying types which are recursively linked
+// to one or more types in the Recursive.
+func (e *TypeEnv) NewRecursive(bind func(*types.Recursive)) (*types.Recursive, error) {
+	rec := &types.Recursive{Id: e.freshId()}
+	bind(rec)
+	for i, ti := range rec.Types {
+		if ti.Underlying == nil {
+			return nil, errors.New("Recursive types must be type applications with underlying types")
+		}
+		// Generalizing any of the recursive types will generalize the Recursive (once)
+		rec.Types[i] = types.GeneralizeRefs(types.NewRef(ti)).(*types.App).Args[0].(*types.App)
+	}
+	return rec, nil
+}
+
 // Declare a type for an identifier within the type environment.
 //
 // Type-variables contained within mutable reference-types will be generalized.
-func (e *TypeEnv) Declare(name string, t types.Type) { e.Types[name] = forceGeneralize(-1, t) }
+func (e *TypeEnv) Declare(name string, t types.Type) {
+	e.Types[name] = types.GeneralizeRefs(t)
+}
 
 // Declare a weakly-polymorphic type for an identifier within the type environment.
 //
 // Type-variables contained within mutable reference-types will not be generalized.
-func (e *TypeEnv) DeclareWeak(name string, t types.Type) { e.Types[name] = generalize(-1, t) }
+func (e *TypeEnv) DeclareWeak(name string, t types.Type) {
+	e.Types[name] = types.Generalize(t)
+}
 
 // Declare a type for an identifier within the type environment.
 //
@@ -128,9 +149,9 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 		}
 	}
 	generalizedMethods := make(types.MethodSet, len(methods))
-	tc := types.NewTypeClass(e.freshId(), name, forceGeneralize(-1, param), generalizedMethods)
+	tc := types.NewTypeClass(e.freshId(), name, types.GeneralizeRefs(param), generalizedMethods)
 	for name, arrow := range methods {
-		arrow = forceGeneralize(-1, arrow).(*types.Arrow)
+		arrow = types.GeneralizeRefs(arrow).(*types.Arrow)
 		generalizedMethods[name] = arrow
 		e.Types[name] = &types.Method{TypeClass: tc, Name: name, Flags: arrow.Flags}
 	}
@@ -236,7 +257,7 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 		e.common = &commonContext{}
 		e.common.init()
 	}
-	param = forceGeneralize(-1, param)
+	param = types.GeneralizeRefs(param)
 	inst := tc.AddInstance(param, impls, methodNames)
 	seen := util.NewIntDedupeMap()
 	err := e.checkSatisfies(tc, param, impls, seen)

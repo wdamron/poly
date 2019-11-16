@@ -31,10 +31,11 @@ func (ctx *commonContext) instantiate(level int, t types.Type) types.Type {
 		return t
 	}
 	ctx.clearInstantiationLookup()
-	return ctx.instantiateRecursive(level, t)
+	ctx.clearRecursiveInstantiationLookup()
+	return ctx.visitInstantiate(level, t)
 }
 
-func (ctx *commonContext) instantiateRecursive(level int, t types.Type) types.Type {
+func (ctx *commonContext) visitInstantiate(level int, t types.Type) types.Type {
 	if !t.IsGeneric() {
 		return t
 	}
@@ -45,7 +46,12 @@ func (ctx *commonContext) instantiateRecursive(level int, t types.Type) types.Ty
 		if tv, ok := ctx.instLookup[id]; ok {
 			return tv
 		}
+
 		tv := ctx.varTracker.New(level)
+		if t.IsWeakVar() {
+			tv.SetWeak()
+		}
+
 		constraints := t.Constraints()
 		constraints2 := make([]types.InstanceConstraint, len(constraints))
 		copy(constraints2, constraints)
@@ -53,34 +59,47 @@ func (ctx *commonContext) instantiateRecursive(level int, t types.Type) types.Ty
 		ctx.instLookup[id] = tv
 		return tv
 
+	case *types.RecursiveLink:
+		rec := t.Recursive
+		var next *types.Recursive
+		if next = ctx.recInstLookup[t.Recursive.Id]; next == nil {
+			next = &types.Recursive{Id: rec.Id, Types: make([]*types.App, len(rec.Types)), Instantiated: true}
+			ctx.recInstLookup[t.Recursive.Id] = next
+
+			for i, ti := range rec.Types {
+				next.Types[i] = ctx.visitInstantiate(level, ti).(*types.App)
+			}
+		}
+		return &types.RecursiveLink{Recursive: next, Index: t.Index}
+
 	case *types.App:
 		args := make([]types.Type, len(t.Args))
 		for i, arg := range t.Args {
-			args[i] = ctx.instantiateRecursive(level, arg)
+			args[i] = ctx.visitInstantiate(level, arg)
 		}
 		var underlying types.Type
 		if t.Underlying != nil {
-			underlying = ctx.instantiateRecursive(level, t.Underlying)
+			underlying = ctx.visitInstantiate(level, t.Underlying)
 		}
-		return &types.App{Const: ctx.instantiateRecursive(level, t.Const), Args: args, Underlying: underlying}
+		return &types.App{Const: ctx.visitInstantiate(level, t.Const), Args: args, Underlying: underlying}
 
 	case *types.Arrow:
 		args := make([]types.Type, len(t.Args))
 		for i, arg := range t.Args {
-			args[i] = ctx.instantiateRecursive(level, arg)
+			args[i] = ctx.visitInstantiate(level, arg)
 		}
-		return &types.Arrow{Args: args, Return: ctx.instantiateRecursive(level, t.Return), Method: t.Method}
+		return &types.Arrow{Args: args, Return: ctx.visitInstantiate(level, t.Return), Method: t.Method}
 
 	case *types.Method:
-		arrow := ctx.instantiateRecursive(level, t.TypeClass.Methods[t.Name]).(*types.Arrow)
+		arrow := ctx.visitInstantiate(level, t.TypeClass.Methods[t.Name]).(*types.Arrow)
 		arrow.Method = t
 		return arrow
 
 	case *types.Record:
-		return &types.Record{Row: ctx.instantiateRecursive(level, t.Row)}
+		return &types.Record{Row: ctx.visitInstantiate(level, t.Row)}
 
 	case *types.Variant:
-		return &types.Variant{Row: ctx.instantiateRecursive(level, t.Row)}
+		return &types.Variant{Row: ctx.visitInstantiate(level, t.Row)}
 
 	case *types.RowExtend:
 		m := t.Labels
@@ -88,7 +107,7 @@ func (ctx *commonContext) instantiateRecursive(level int, t types.Type) types.Ty
 		m.Range(func(label string, ts types.TypeList) bool {
 			lb := ts.Builder()
 			ts.Range(func(i int, t types.Type) bool {
-				lb.Set(i, ctx.instantiateRecursive(level, t))
+				lb.Set(i, ctx.visitInstantiate(level, t))
 				return true
 			})
 			mb.Set(label, lb.Build())
@@ -98,7 +117,7 @@ func (ctx *commonContext) instantiateRecursive(level int, t types.Type) types.Ty
 		if row == nil {
 			row = types.RowEmptyPointer
 		} else if _, ok := row.(*types.RowEmpty); !ok {
-			row = ctx.instantiateRecursive(level, t.Row)
+			row = ctx.visitInstantiate(level, t.Row)
 		}
 		return &types.RowExtend{Row: row, Labels: mb.Build()}
 	}

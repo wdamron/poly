@@ -51,7 +51,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Ty
 				return nil, err
 			}
 			stashed := ti.common.stash(env, e.Var)
-			env.Types[e.Var] = generalize(level, t)
+			env.Types[e.Var] = types.GeneralizeAtLevel(level, t)
 			t, err = ti.infer(env, level, e.Body)
 			delete(env.Types, e.Var)
 			ti.common.unstash(env, stashed)
@@ -69,7 +69,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Ty
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		env.Types[e.Var] = generalize(level, t)
+		env.Types[e.Var] = types.GeneralizeAtLevel(level, t)
 		t, err = ti.infer(env, level, e.Body)
 		delete(env.Types, e.Var)
 		ti.common.unstash(env, stashed)
@@ -133,7 +133,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Ty
 			tv, tail = vars.Head(), vars.Tail()
 			for _, bindNum := range scc {
 				v := e.Vars[bindNum]
-				env.Types[v.Var] = generalize(level, tv)
+				env.Types[v.Var] = types.GeneralizeAtLevel(level, tv)
 				tv, tail = tail.Head(), tail.Tail()
 			}
 		}

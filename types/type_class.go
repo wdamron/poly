@@ -31,9 +31,9 @@ type MethodSet map[string]*Arrow
 
 // Parameterized type-class
 type TypeClass struct {
-	// Id should be unique
+	// Id should uniquely identify the type-class
 	Id int
-	// Name should be unique
+	// Name should uniquely identify the type-class
 	Name      string
 	Param     Type
 	Methods   MethodSet

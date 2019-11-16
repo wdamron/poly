@@ -58,11 +58,12 @@ type stashedLink struct {
 func (l *stashedLink) restore() { *l.v = l.prev }
 
 type commonContext struct {
-	varTracker typeutil.VarTracker
-	envStash   []stashedType      // shadowed variables
-	linkStash  []stashedLink      // stashed type-variables (during speculative unification)
-	instLookup map[int]*types.Var // instantiation lookup for generic type-variables
-	speculate  bool
+	varTracker    typeutil.VarTracker
+	envStash      []stashedType            // shadowed variables
+	linkStash     []stashedLink            // stashed type-variables (during speculative unification)
+	instLookup    map[int]*types.Var       // instantiation lookup for generic type-variables
+	recInstLookup map[int]*types.Recursive // instantiation lookup for mutually-recursive type groups
+	speculate     bool
 
 	// cache of the most-recently matched instance by type-class id:
 	lastInstanceMatch map[int]*types.Instance
@@ -73,7 +74,8 @@ type commonContext struct {
 }
 
 func (ctx *commonContext) init() {
-	ctx.envStash, ctx.linkStash, ctx.instLookup = ctx._envStash[:0], ctx._linkStash[:0], make(map[int]*types.Var, 16)
+	ctx.envStash, ctx.linkStash, ctx.instLookup, ctx.recInstLookup =
+		ctx._envStash[:0], ctx._linkStash[:0], make(map[int]*types.Var, 16), make(map[int]*types.Recursive, 16)
 }
 
 func (ctx *commonContext) reset() {
@@ -83,12 +85,19 @@ func (ctx *commonContext) reset() {
 	}
 	ctx.envStash, ctx.linkStash = ctx._envStash[:0], ctx._linkStash[:0]
 	ctx.clearInstantiationLookup()
+	ctx.clearRecursiveInstantiationLookup()
 	ctx.clearLastInstanceCache()
 }
 
 func (ctx *commonContext) clearInstantiationLookup() {
 	for k := range ctx.instLookup {
 		delete(ctx.instLookup, k)
+	}
+}
+
+func (ctx *commonContext) clearRecursiveInstantiationLookup() {
+	for k := range ctx.recInstLookup {
+		delete(ctx.recInstLookup, k)
 	}
 }
 
@@ -237,12 +246,12 @@ func (ti *InferenceContext) inferRoot(root ast.Expr, env *TypeEnv, nocopy bool) 
 		ti.init()
 	}
 	ti.rootExpr, ti.common.varTracker.NextId = root, env.NextVarId
-	t, err := ti.infer(env, 0, root)
+	t, err := ti.infer(env, types.TopLevel+1, root)
 	ti.needsReset, ti.rootExpr, env.NextVarId = true, nil, ti.common.varTracker.NextId
 	if err != nil {
 		return root, t, err
 	}
-	t = generalize(-1, t)
+	t = types.Generalize(t)
 	ti.common.varTracker.FlattenLinks()
 	return root, t, nil
 }

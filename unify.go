@@ -37,15 +37,15 @@ func (ctx *commonContext) occursAdjustLevels(id, level int, t types.Type) error 
 			return ctx.occursAdjustLevels(id, level, t.Link())
 		case t.IsGenericVar():
 			return errors.New("Types must be instantiated before checking for recursion")
-		case t.IsUnboundVar():
+		default: // weak or unbound
 			if t.Id() == id {
-				return errors.New("Recursive types are not supported")
+				return errors.New("Implicitly recursive types are not supported")
 			}
 			if t.Level() > level {
 				if ctx.speculate {
 					ctx.stashLink(t)
 				}
-				t.SetLevel(level)
+				t.SetLevelNum(level)
 			}
 		}
 		return nil
@@ -109,89 +109,113 @@ func (ctx *commonContext) canUnify(a, b types.Type) bool {
 	return err == nil
 }
 
+func (ctx *commonContext) applyConstraints(a *types.Var, b types.Type) error {
+	aConstraints := a.Constraints()
+	if len(aConstraints) == 0 {
+		return nil
+	}
+	bv, bIsVar := b.(*types.Var)
+	if bIsVar {
+		bConstraints := bv.Constraints()
+		// merge instance constraints into the link target
+		if ctx.speculate {
+			// don't modify the existing slice of constraints
+			ctx.stashLink(bv)
+			bConstraintsTmp := make([]types.InstanceConstraint, len(bConstraints), len(bConstraints)+len(aConstraints))
+			copy(bConstraintsTmp, bConstraints)
+			bv.SetConstraints(bConstraintsTmp)
+		}
+		for _, c := range aConstraints {
+			bv.AddConstraint(c)
+		}
+		a.SetConstraints(nil)
+		return nil
+	}
+
+	// evaluate instance constraints (find a matching instance for each type-class)
+	seen := util.NewIntDedupeMap()
+	for _, c := range aConstraints {
+		if seen[c.TypeClass.Id] {
+			continue
+		}
+		seen[c.TypeClass.Id] = true
+		var matched *types.Instance
+		if ctx.lastInstanceMatch != nil {
+			if inst, ok := ctx.lastInstanceMatch[c.TypeClass.Id]; ok && ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param)) {
+				matched = inst
+			}
+		}
+		if matched == nil {
+			c.TypeClass.MatchInstance(b, func(inst *types.Instance) (found bool) {
+				if ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param)) {
+					matched = inst
+					return true
+				}
+				return false
+			})
+		}
+		if matched == nil {
+			seen.Release()
+			return errors.New("No matching instance found for type-class " + c.TypeClass.Name)
+		}
+		if ctx.lastInstanceMatch == nil {
+			ctx.lastInstanceMatch = make(map[int]*types.Instance)
+		}
+		ctx.lastInstanceMatch[c.TypeClass.Id] = matched
+	}
+	seen.Release()
+	return nil
+}
+
 func (ctx *commonContext) unify(a, b types.Type) error {
+	a, b = types.RealType(a), types.RealType(b)
 	if a == b {
 		return nil
+	}
+
+	// unify with recursive types:
+
+	if a, ok := a.(*types.RecursiveLink); ok {
+		if b, ok := b.(*types.RecursiveLink); ok {
+			if a.Recursive.Id != b.Recursive.Id || a.Index != b.Index {
+				return errors.New("Failed to unify recursive type links")
+			}
+			return nil
+		}
+		// unroll a
+		return ctx.unify(a.Link(), b)
+	}
+	if b, ok := b.(*types.RecursiveLink); ok {
+		// unroll b
+		return ctx.unify(a, b.Link())
 	}
 
 	// unify type variables:
 
 	if a, ok := a.(*types.Var); ok {
-		switch {
-		case a.IsLinkVar():
-			return ctx.unify(a.Link(), b)
-		case a.IsUnboundVar():
-			b = types.RealType(b)
-			bv, bIsVar := b.(*types.Var)
-			if bIsVar {
-				if bv.IsUnboundVar() && a.Id() == bv.Id() {
-					return errors.New("Recursive types are not supported")
-				}
-			}
-			if ctx.speculate {
-				ctx.stashLink(a)
-			}
-			if err := ctx.occursAdjustLevels(a.Id(), a.Level(), b); err != nil {
-				return err
-			}
-			aConstraints := a.Constraints()
-			if len(aConstraints) != 0 {
-				if bIsVar {
-					bConstraints := bv.Constraints()
-					// merge instance constraints into the link target
-					if ctx.speculate {
-						// don't modify the existing slice of constraints
-						ctx.stashLink(bv)
-						bConstraintsTmp := make([]types.InstanceConstraint, len(bConstraints), len(bConstraints)+len(aConstraints))
-						copy(bConstraintsTmp, bConstraints)
-						bv.SetConstraints(bConstraintsTmp)
-					}
-					for _, c := range aConstraints {
-						bv.AddConstraint(c)
-					}
-					a.SetConstraints(nil)
-				} else {
-					// evaluate instance constraints (find a matching instance for each type-class)
-					seen := util.NewIntDedupeMap()
-					for _, c := range aConstraints {
-						if seen[c.TypeClass.Id] {
-							continue
-						}
-						seen[c.TypeClass.Id] = true
-						var matched *types.Instance
-						if ctx.lastInstanceMatch != nil {
-							if inst, ok := ctx.lastInstanceMatch[c.TypeClass.Id]; ok && ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param)) {
-								matched = inst
-							}
-						}
-						if matched == nil {
-							c.TypeClass.MatchInstance(b, func(inst *types.Instance) (found bool) {
-								if ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param)) {
-									matched = inst
-									return true
-								}
-								return false
-							})
-						}
-						if matched == nil {
-							seen.Release()
-							return errors.New("No matching instance found for type-class " + c.TypeClass.Name)
-						}
-						if ctx.lastInstanceMatch == nil {
-							ctx.lastInstanceMatch = make(map[int]*types.Instance)
-						}
-						ctx.lastInstanceMatch[c.TypeClass.Id] = matched
-					}
-					seen.Release()
-				}
-
-			}
-
-			a.SetLink(b)
-			return nil
-		default:
+		if a.IsGenericVar() {
 			return errors.New("Generic type-variable was not instantiated before unification")
 		}
+
+		// weak or unbound
+		if ctx.speculate {
+			ctx.stashLink(a)
+		}
+		bv, bIsVar := b.(*types.Var)
+		if bIsVar {
+			if bv.IsUnboundVar() && a.Id() == bv.Id() {
+				return errors.New("Implicitly recursive types are not supported")
+			}
+		}
+		if err := ctx.occursAdjustLevels(a.Id(), a.Level(), b); err != nil {
+			return err
+		}
+		if err := ctx.applyConstraints(a, b); err != nil {
+			return err
+		}
+
+		a.SetLink(b)
+		return nil
 	}
 
 	if b, ok := b.(*types.Var); ok {
@@ -294,7 +318,11 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 		if _, ok := b.(*types.RowEmpty); ok {
 			return nil
 		}
+
+	case *types.RecursiveLink:
+		panic("unreachable")
 	}
+
 	return errors.New("Failed to unify " + a.TypeName() + " with " + b.TypeName())
 }
 
