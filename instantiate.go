@@ -61,15 +61,23 @@ func (ctx *commonContext) visitInstantiate(level int, t types.Type) types.Type {
 
 	case *types.RecursiveLink:
 		rec := t.Recursive
-		var next *types.Recursive
-		if next = ctx.recInstLookup[t.Recursive.Id]; next == nil {
-			next = &types.Recursive{Id: rec.Id, Types: make([]*types.App, len(rec.Types)), Instantiated: true}
-			ctx.recInstLookup[t.Recursive.Id] = next
-
-			for i, ti := range rec.Types {
-				next.Types[i] = ctx.visitInstantiate(level, ti).(*types.App)
-			}
+		if next := ctx.recInstLookup[t.Recursive.Id]; next != nil {
+			return &types.RecursiveLink{Recursive: next, Index: t.Index}
 		}
+		next := &types.Recursive{
+			Id:           rec.Id,
+			Types:        make([]*types.App, len(rec.Types)),
+			Names:        rec.Names,
+			Indexes:      rec.Indexes,
+			Instantiated: true,
+			Flags:        rec.Flags,
+		}
+		copy(next.Types, rec.Types)
+		ctx.recInstLookup[t.Recursive.Id] = next
+		for i, ti := range next.Types {
+			next.Types[i] = ctx.visitInstantiate(level, ti).(*types.App)
+		}
+		next.Flags &^= types.ContainsGenericVars
 		return &types.RecursiveLink{Recursive: next, Index: t.Index}
 
 	case *types.App:
@@ -81,7 +89,7 @@ func (ctx *commonContext) visitInstantiate(level int, t types.Type) types.Type {
 		if t.Underlying != nil {
 			underlying = ctx.visitInstantiate(level, t.Underlying)
 		}
-		return &types.App{Const: ctx.visitInstantiate(level, t.Const), Args: args, Underlying: underlying}
+		return &types.App{Const: ctx.visitInstantiate(level, t.Const), Args: args, Underlying: underlying, Flags: t.Flags &^ types.ContainsGenericVars}
 
 	case *types.Arrow:
 		args := make([]types.Type, len(t.Args))

@@ -29,7 +29,7 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (types.Type, error) {
+func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret types.Type, err error) {
 	switch e := e.(type) {
 	case *ast.Var:
 		t := env.Lookup(e.Name)

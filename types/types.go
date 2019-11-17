@@ -42,6 +42,8 @@ const (
 	ContainsGenericVars TypeFlags = 1
 	// TypeFlags for a type which is a mutable reference-type or contains mutable reference-types
 	ContainsRefs TypeFlags = 2
+	// Weakly-polymorphic types may not be generalized.
+	WeaklyPolymorphic = 4
 )
 
 // Mutable references are applications of RefType (a mutable reference-type) with a single referenced type-parameter.
@@ -124,6 +126,9 @@ func (t *App) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
 
 // Check if t contains mutable reference-types.
 func (t *App) HasRefs() bool { return t.Flags&ContainsRefs != 0 || IsRefType(t) }
+
+// Check if t is weakly-polymorphic and cannot be generalized.
+func (t *App) IsWeak() bool { return t.Flags&WeaklyPolymorphic != 0 || t.HasRefs() }
 
 // Check if t contains generic types.
 func (t *Arrow) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }

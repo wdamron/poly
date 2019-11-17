@@ -43,19 +43,19 @@ func TestRefs(t *testing.T) {
 		t.Fatal(err)
 	}
 	typeString := types.TypeString(ty)
-	if typeString != "ref['_0]" {
+	if typeString != "weak '_0 => ref['_0]" {
 		t.Fatalf("types within references should not be generalized: %s", typeString)
 	}
 
 	a = env.NewGenericVar()
 	env.Declare("new", TArrow(nil, TRef(a)))
-	expr := RecordExtend(nil, LabelValue("id", Func1("x", Var("x"))), LabelValue("r", Call(Var("new"))))
+	expr := RecordExtend(RecordEmpty(), LabelValue("id", Func1("x", Var("x"))), LabelValue("r", Call(Var("new"))))
 	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
 	typeString = types.TypeString(ty)
-	if typeString != "{id : 'a -> 'a, r : ref['_3]}" {
+	if typeString != "weak '_3 => {id : 'a -> 'a, r : ref['_3]}" {
 		t.Fatalf("types within references should not be generalized: %s", typeString)
 	}
 
@@ -179,39 +179,30 @@ func TestMutuallyRecursiveTypes(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	int2bool := TApp(TConst("cycle"), TConst("int"), TConst("bool"))
-	bool2int := TApp(TConst("cycle"), TConst("bool"), TConst("int"))
 	cycle, err := env.NewRecursive(func(rec *types.Recursive) {
-		int2boolidx, bool2intidx := rec.AddType(int2bool), rec.AddType(bool2int)
+		int2bool := TApp(TConst("cycle"), TConst("int"), TConst("bool"))
+		bool2int := TApp(TConst("cycle"), TConst("bool"), TConst("int"))
+		rec.AddType("int2bool", int2bool)
+		rec.AddType("bool2int", bool2int)
 		int2bool.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
 			"v":    TConst("int"),
-			"link": &types.RecursiveLink{Recursive: rec, Index: bool2intidx},
+			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["bool2int"]},
 		})))
 		bool2int.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
 			"v":    TConst("bool"),
-			"link": &types.RecursiveLink{Recursive: rec, Index: int2boolidx},
+			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["int2bool"]},
 		})))
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	int2bool := cycle.GetType("int2bool")
 	env.Declare("someint2bool", int2bool)
-	env.Declare("cycle0", cycle.Types[0])
 
 	var expr ast.Expr = Var("someint2bool")
 
 	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "cycle[int, bool]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
-
-	expr = Var("cycle0")
-
-	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,6 +251,88 @@ func TestMutuallyRecursiveTypes(t *testing.T) {
 	}
 	if types.TypeString(ty) != "bool" {
 		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+}
+
+func TestGenericMutuallyRecursiveTypes(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	cycle, err := env.NewRecursive(func(rec *types.Recursive) {
+		a, b := env.NewGenericVar(), env.NewGenericVar()
+		a2b := TApp(TConst("cycle"), a, b)
+		b2a := TApp(TConst("cycle"), b, a)
+		rec.AddType("a2b", a2b)
+		rec.AddType("b2a", b2a)
+		a2b.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
+			"v":    a,
+			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["b2a"]},
+		})))
+		b2a.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
+			"v":    b,
+			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["a2b"]},
+		})))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a2b := cycle.GetType("a2b")
+	a2b = types.Generalize(a2b).(*types.App)
+	env.Declare("a2bid", TArrow1(a2b, a2b))
+
+	intboolcycle, err := env.NewRecursiveInstance(cycle, func(rec *types.Recursive) {
+		int2bool := TApp(TConst("cycle"), TConst("int"), TConst("bool"))
+		bool2int := TApp(TConst("cycle"), TConst("bool"), TConst("int"))
+		rec.AddType("int2bool", int2bool)
+		rec.AddType("bool2int", bool2int)
+		int2bool.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
+			"v":    TConst("int"),
+			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["bool2int"]},
+		})))
+		bool2int.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
+			"v":    TConst("bool"),
+			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["int2bool"]},
+		})))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	int2bool := intboolcycle.GetType("int2bool")
+	env.Declare("someint2bool", int2bool)
+
+	expr := Let("x", Call(Var("a2bid"), Var("someint2bool")),
+		Let("y", RecordSelect(Var("x"), "link"),
+			Let("z", RecordSelect(Var("y"), "link"),
+				Var("z"))))
+
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "cycle[int, bool]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	// invalid:
+
+	_, err = env.NewRecursiveInstance(cycle, func(rec *types.Recursive) {
+		int2bool := TApp(TConst("cycle"), TConst("int"), TConst("bool"))
+		bool2int := TApp(TConst("cycle"), TConst("bool"), TConst("int"))
+		rec.AddType("int2bool", int2bool)
+		rec.AddType("bool2int", bool2int)
+		int2bool.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
+			"v":    TConst("int"),
+			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["bool2int"]},
+		})))
+		bool2int.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
+			"v":    TConst("bool"),
+			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["bool2int"]}, // <-- should not unify
+		})))
+	})
+	if err == nil {
+		t.Fatalf("expected unification error for invalid recursive instance")
 	}
 }
 

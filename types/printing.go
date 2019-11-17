@@ -51,11 +51,11 @@ func TypeString(t Type) string {
 			sb.WriteString(", ")
 		}
 		idName := p.idNames[id]
-		for j, k := range p.preds[id] {
+		for j, pred := range p.preds[id] {
 			if j > 0 {
 				sb.WriteString(", ")
 			}
-			sb.WriteString(k.TypeClass.Name)
+			sb.WriteString(pred)
 			sb.WriteByte(' ')
 			sb.WriteString(idName)
 		}
@@ -71,7 +71,7 @@ func TypeString(t Type) string {
 
 type typePrinter struct {
 	idNames map[int]string
-	preds   map[int][]InstanceConstraint
+	preds   map[int][]string
 	sb      strings.Builder
 }
 
@@ -90,9 +90,16 @@ func typeString(p *typePrinter, simple bool, t Type) {
 
 	case *Var:
 		switch {
-		case t.IsWeakVar() || t.IsUnboundVar():
-			p.sb.WriteString("'_")
-			p.sb.WriteString(strconv.Itoa(t.Id()))
+		case t.IsUnboundVar():
+			if len(p.idNames) == 0 {
+				p.idNames = make(map[int]string)
+			} else if name, ok := p.idNames[t.Id()]; ok {
+				p.sb.WriteString(name)
+				return
+			}
+			name := "'_" + strconv.Itoa(t.Id())
+			p.sb.WriteString(name)
+			p.idNames[t.Id()] = name
 
 		case t.IsLinkVar():
 			typeString(p, simple, t.Link())
@@ -108,18 +115,22 @@ func typeString(p *typePrinter, simple bool, t Type) {
 			p.idNames[t.Id()] = name
 			p.sb.WriteString(name)
 		}
-		if len(t.constraints) == 0 {
+		if len(t.constraints) == 0 && !t.IsWeakVar() {
 			return
 		}
-		if p.preds == nil {
-			p.preds = map[int][]InstanceConstraint{
-				t.Id(): t.constraints,
-			}
-		} else {
-			if _, ok := p.preds[t.Id()]; !ok {
-				p.preds[t.Id()] = t.constraints
-			}
+		if p.preds != nil && len(p.preds[t.Id()]) > 0 {
+			return
+		} else if p.preds == nil {
+			p.preds = make(map[int][]string)
 		}
+		preds := make([]string, 0, len(t.constraints)+1)
+		if t.IsWeakVar() {
+			preds = append(preds, "weak")
+		}
+		for _, c := range t.constraints {
+			preds = append(preds, c.TypeClass.Name)
+		}
+		p.preds[t.Id()] = preds
 
 	case *RecursiveLink:
 		typeString(p, false, t.Link())

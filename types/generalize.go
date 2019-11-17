@@ -23,24 +23,21 @@
 package types
 
 // Generalize all unbound type-variables in t, excluding type-variables within mutable reference-types.
-func Generalize(t Type) Type { return generalize(TopLevel, t) }
+func Generalize(t Type) Type { return generalizeOpts(TopLevel, t, false, false) }
+
+// Generalize all unbound type-variables in t, marking each generalized variable as weakly-polymorphic.
+func GeneralizeWeak(t Type) Type { return generalizeOpts(TopLevel, t, true, true) }
 
 // Generalize all unbound type-variables in t, excluding type-variables within mutable reference-types.
-func GeneralizeAtLevel(level int, t Type) Type { return generalize(level, t) }
+func GeneralizeAtLevel(level int, t Type) Type { return generalizeOpts(level, t, false, true) }
 
 // Generalize all unbound type-variables in t, including type-variables within mutable reference-types.
-func GeneralizeRefs(t Type) Type { return forceGeneralize(TopLevel, t) }
+func GeneralizeRefs(t Type) Type { return generalizeOpts(TopLevel, t, false, true) }
 
-func forceGeneralize(level int, t Type) Type {
-	const weak, forceGeneralize = false, true
-	ngeneric, nref := 0, 0
-	t = RealType(t)
-	visitTypeVars(level, t, weak, forceGeneralize, &ngeneric, &nref)
-	return t
-}
+// Mark all type-variables in t as weakly-polymorphic. Weakly-polymorphic types will not be generalized during inference.
+func MarkWeak(t Type) Type { return generalizeOpts(TopLevel, t, true, false) }
 
-func generalize(level int, t Type) Type {
-	const weak, forceGeneralize = false, false
+func generalizeOpts(level int, t Type, weak, forceGeneralize bool) Type {
 	ngeneric, nref := 0, 0
 	t = RealType(t)
 	visitTypeVars(level, t, weak, forceGeneralize, &ngeneric, &nref)
@@ -55,20 +52,23 @@ func visitTypeVars(level int, t Type, weak, forceGeneralize bool, ngeneric, nref
 			visitTypeVars(level, t.Link(), weak, forceGeneralize, ngeneric, nref)
 		case t.IsGenericVar():
 			*ngeneric++
+			if weak && !t.IsWeakVar() {
+				t.SetWeak()
+			}
 		default: // weak or unbound
-			if t.LevelNum() > level || forceGeneralize {
+			if t.LevelNum() > level && (forceGeneralize || (!weak && !t.IsWeakVar())) {
 				*ngeneric++
 				t.SetGeneric()
 			}
-			if weak {
+			if weak && !t.IsWeakVar() {
 				t.SetWeak()
 			}
 		}
 
 	case *RecursiveLink:
 		ng, nr := *ngeneric, *nref
-		rec := t.Recursive
-		if rec.Generalized {
+		weak, rec := true, t.Recursive
+		if rec.Generalized || rec.Instantiated {
 			return
 		}
 		rec.Generalized, rec.Instantiated = true, false
@@ -88,6 +88,9 @@ func visitTypeVars(level int, t Type, weak, forceGeneralize bool, ngeneric, nref
 		if IsRefType(t) {
 			*nref++
 			weak = true
+			t.Flags |= WeaklyPolymorphic
+		} else if weak {
+			t.Flags |= WeaklyPolymorphic
 		}
 		for i, arg := range t.Args {
 			t.Args[i] = RealType(arg)

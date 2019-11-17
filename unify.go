@@ -192,34 +192,45 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 
 	// unify type variables:
 
-	if a, ok := a.(*types.Var); ok {
-		if a.IsGenericVar() {
+	avar, _ := a.(*types.Var)
+	bvar, _ := b.(*types.Var)
+	switch {
+	case avar == nil && bvar != nil:
+		return ctx.unify(b, a)
+
+	case avar != nil:
+		if avar.IsGenericVar() {
 			return errors.New("Generic type-variable was not instantiated before unification")
 		}
-
 		// weak or unbound
 		if ctx.speculate {
-			ctx.stashLink(a)
+			ctx.stashLink(avar)
 		}
-		bv, bIsVar := b.(*types.Var)
-		if bIsVar {
-			if bv.IsUnboundVar() && a.Id() == bv.Id() {
+		if bvar != nil {
+			if bvar.IsUnboundVar() && avar.Id() == bvar.Id() {
 				return errors.New("Implicitly recursive types are not supported")
 			}
+			if avar.IsWeakVar() || bvar.IsWeakVar() {
+				avar.SetWeak()
+				bvar.SetWeak()
+			}
+		} else if avar.IsWeakVar() {
+			// make b weak
+			types.MarkWeak(b)
 		}
-		if err := ctx.occursAdjustLevels(a.Id(), a.Level(), b); err != nil {
+		if err := ctx.occursAdjustLevels(avar.Id(), avar.Level(), b); err != nil {
 			return err
 		}
-		if err := ctx.applyConstraints(a, b); err != nil {
+		if err := ctx.applyConstraints(avar, b); err != nil {
 			return err
 		}
 
-		a.SetLink(b)
+		if b, ok := b.(*types.App); ok && b.IsWeak() {
+			avar.SetWeak()
+		}
+
+		avar.SetLink(b)
 		return nil
-	}
-
-	if b, ok := b.(*types.Var); ok {
-		return ctx.unify(b, a)
 	}
 
 	// unify aliased types:

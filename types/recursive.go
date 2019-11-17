@@ -33,15 +33,35 @@ type Recursive struct {
 	// Types is an indexed slice containing one or more aliased types.
 	// Each aliased type should contain recursive links which point back to this recursive group.
 	Types        []*App
+	Names        []string
+	Indexes      map[string]int
 	Flags        TypeFlags
 	Generalized  bool
 	Instantiated bool
 }
 
 // Add a type to the recursive type-group. The index of the type will be returned.
-func (r *Recursive) AddType(aliased *App) int {
-	r.Types = append(r.Types, aliased)
+//
+// Each type in the recursive type-group must be assigned a unique name, which may be used for looking
+// up the type's index within the group. The name is not printed or included with the type.
+func (r *Recursive) AddType(name string, aliased *App) int {
+	r.Types, r.Names = append(r.Types, aliased), append(r.Names, name)
+	if r.Indexes == nil {
+		r.Indexes = make(map[string]int)
+	}
+	r.Indexes[name] = len(r.Types) - 1
 	return len(r.Types) - 1
+}
+
+// Lookup a type within the recursive type-group by its unique name.
+func (r *Recursive) GetType(name string) *App {
+	if len(r.Types) == 0 {
+		return nil
+	}
+	if index, ok := r.Indexes[name]; ok {
+		return r.Types[index]
+	}
+	return nil
 }
 
 // Recursive link to a type.
