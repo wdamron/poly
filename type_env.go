@@ -25,6 +25,7 @@ package poly
 import (
 	"errors"
 
+	"github.com/wdamron/poly/internal/typeutil"
 	"github.com/wdamron/poly/internal/util"
 	"github.com/wdamron/poly/types"
 )
@@ -44,7 +45,7 @@ type TypeEnv struct {
 	// Type-classes declared in the current type-environment
 	TypeClasses map[string]*types.TypeClass
 
-	common *commonContext
+	common *typeutil.CommonContext
 }
 
 // Create a type-environment. The new environment will inherit bindings from the parent, if the parent is not nil.
@@ -132,11 +133,11 @@ func (e *TypeEnv) NewRecursiveInstance(parent *types.Recursive, bind func(*types
 		rec.Types[i] = types.GeneralizeWeak(ti).(*types.App)
 	}
 	if e.common == nil {
-		e.common = &commonContext{}
-		e.common.init()
+		e.common = &typeutil.CommonContext{}
+		e.common.Init()
 	}
 	for i, ti := range rec.Types {
-		if !e.common.canUnify(e.common.instantiate(types.TopLevel, ti), e.common.instantiate(types.TopLevel, parent.Types[i])) {
+		if !e.common.CanUnify(e.common.Instantiate(types.TopLevel, ti), e.common.Instantiate(types.TopLevel, parent.Types[i])) {
 			return nil, errors.New("Recursive instance must instantiate (unify with) the parent group")
 		}
 	}
@@ -179,6 +180,13 @@ func (e *TypeEnv) DeclareWeak(name string, t types.Type) {
 //
 // Type-variables will not be generalized.
 func (e *TypeEnv) DeclareInvariant(name string, t types.Type) { e.Types[name] = t }
+
+// Declare a type for an identifier within the type environment.
+//
+// Type-variables will not be generalized.
+//
+// Assign is an alias for DeclareInvariant.
+func (e *TypeEnv) Assign(name string, t types.Type) { e.Types[name] = t }
 
 // Lookup the type for an identifier in the environment or its parent environment(s).
 func (e *TypeEnv) Lookup(name string) types.Type {
@@ -288,7 +296,7 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 	// prevent overlapping instances:
 	var conflict *types.Instance
 	tc.FindInstanceFromRoots(func(inst *types.Instance) bool {
-		if !e.common.canUnify(e.common.instantiate(0, param), e.common.instantiate(0, inst.Param)) {
+		if !e.common.CanUnify(e.common.Instantiate(0, param), e.common.Instantiate(0, inst.Param)) {
 			return false
 		}
 		if inst.TypeClass.HasSuperClass(tc) || tc.HasSuperClass(inst.TypeClass) {
@@ -314,16 +322,16 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 		impls[name] = arrow
 	}
 	if e.common == nil {
-		e.common = &commonContext{}
-		e.common.init()
+		e.common = &typeutil.CommonContext{}
+		e.common.Init()
 	}
 	param = types.GeneralizeRefs(param)
 	inst := tc.AddInstance(param, impls, methodNames)
 	seen := util.NewIntDedupeMap()
 	err := e.checkSatisfies(tc, param, impls, seen)
 	seen.Release()
-	e.common.varTracker.FlattenLinks()
-	e.common.varTracker.ResetKeepId()
+	e.common.VarTracker.FlattenLinks()
+	e.common.VarTracker.ResetKeepId()
 	if err != nil {
 		tc.Instances = tc.Instances[:len(tc.Instances)-1]
 		return nil, err
@@ -341,12 +349,12 @@ func (e *TypeEnv) FindMethodInstance(arrow *types.Arrow) *types.Instance {
 		return nil
 	}
 	if e.common == nil {
-		e.common = &commonContext{}
-		e.common.init()
+		e.common = &typeutil.CommonContext{}
+		e.common.Init()
 	}
 	var match *types.Instance
 	method.TypeClass.FindInstance(func(inst *types.Instance) bool {
-		if !e.common.canUnify(e.common.instantiate(0, arrow), e.common.instantiate(0, inst.Methods[method.Name])) {
+		if !e.common.CanUnify(e.common.Instantiate(0, arrow), e.common.Instantiate(0, inst.Methods[method.Name])) {
 			return false
 		}
 		match = inst
@@ -361,7 +369,7 @@ func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodIm
 		if !ok || len(def.Args) != len(impl.Args) {
 			return methodErr(tc, param, name)
 		}
-		if !e.common.canUnify(e.common.instantiate(0, def).(*types.Arrow), e.common.instantiate(0, impl).(*types.Arrow)) {
+		if !e.common.CanUnify(e.common.Instantiate(0, def).(*types.Arrow), e.common.Instantiate(0, impl).(*types.Arrow)) {
 			return methodErr(tc, param, name)
 		}
 	}

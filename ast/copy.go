@@ -24,6 +24,8 @@ package ast
 
 func CopyExpr(e Expr) Expr {
 	switch e := e.(type) {
+	case *Literal:
+		return &Literal{e.Syntax, e.Construct, e.inferred}
 	case *Var:
 		return &Var{e.Name, e.inferred}
 

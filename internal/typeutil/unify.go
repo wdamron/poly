@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package poly
+package typeutil
 
 import (
 	"errors"
@@ -29,7 +29,7 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-func (ctx *commonContext) occursAdjustLevels(id, level int, t types.Type) error {
+func (ctx *CommonContext) occursAdjustLevels(id, level int, t types.Type) error {
 	switch t := t.(type) {
 	case *types.Var:
 		switch {
@@ -42,8 +42,8 @@ func (ctx *commonContext) occursAdjustLevels(id, level int, t types.Type) error 
 				return errors.New("Implicitly recursive types are not supported")
 			}
 			if t.Level() > level {
-				if ctx.speculate {
-					ctx.stashLink(t)
+				if ctx.Speculate {
+					ctx.StashLink(t)
 				}
 				t.SetLevelNum(level)
 			}
@@ -99,17 +99,17 @@ func (ctx *commonContext) occursAdjustLevels(id, level int, t types.Type) error 
 	}
 }
 
-func (ctx *commonContext) canUnify(a, b types.Type) bool {
-	speculating := ctx.speculate
-	ctx.speculate = true
-	stashedLinks := ctx.linkStash
-	err := ctx.unify(a, b)
-	ctx.unstashLinks(len(ctx.linkStash) - len(stashedLinks))
-	ctx.speculate, ctx.linkStash = speculating, stashedLinks
+func (ctx *CommonContext) CanUnify(a, b types.Type) bool {
+	speculating := ctx.Speculate
+	ctx.Speculate = true
+	stashedLinks := ctx.LinkStash
+	err := ctx.Unify(a, b)
+	ctx.UnstashLinks(len(ctx.LinkStash) - len(stashedLinks))
+	ctx.Speculate, ctx.LinkStash = speculating, stashedLinks
 	return err == nil
 }
 
-func (ctx *commonContext) applyConstraints(a *types.Var, b types.Type) error {
+func (ctx *CommonContext) applyConstraints(a *types.Var, b types.Type) error {
 	aConstraints := a.Constraints()
 	if len(aConstraints) == 0 {
 		return nil
@@ -118,9 +118,9 @@ func (ctx *commonContext) applyConstraints(a *types.Var, b types.Type) error {
 	if bIsVar {
 		bConstraints := bv.Constraints()
 		// merge instance constraints into the link target
-		if ctx.speculate {
+		if ctx.Speculate {
 			// don't modify the existing slice of constraints
-			ctx.stashLink(bv)
+			ctx.StashLink(bv)
 			bConstraintsTmp := make([]types.InstanceConstraint, len(bConstraints), len(bConstraints)+len(aConstraints))
 			copy(bConstraintsTmp, bConstraints)
 			bv.SetConstraints(bConstraintsTmp)
@@ -140,14 +140,14 @@ func (ctx *commonContext) applyConstraints(a *types.Var, b types.Type) error {
 		}
 		seen[c.TypeClass.Id] = true
 		var matched *types.Instance
-		if ctx.lastInstanceMatch != nil {
-			if inst, ok := ctx.lastInstanceMatch[c.TypeClass.Id]; ok && ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param)) {
+		if ctx.LastInstanceMatch != nil {
+			if inst, ok := ctx.LastInstanceMatch[c.TypeClass.Id]; ok && ctx.CanUnify(b, ctx.Instantiate(a.Level(), inst.Param)) {
 				matched = inst
 			}
 		}
 		if matched == nil {
 			c.TypeClass.MatchInstance(b, func(inst *types.Instance) (found bool) {
-				if ctx.canUnify(b, ctx.instantiate(a.Level(), inst.Param)) {
+				if ctx.CanUnify(b, ctx.Instantiate(a.Level(), inst.Param)) {
 					matched = inst
 					return true
 				}
@@ -158,16 +158,16 @@ func (ctx *commonContext) applyConstraints(a *types.Var, b types.Type) error {
 			seen.Release()
 			return errors.New("No matching instance found for type-class " + c.TypeClass.Name)
 		}
-		if ctx.lastInstanceMatch == nil {
-			ctx.lastInstanceMatch = make(map[int]*types.Instance)
+		if ctx.LastInstanceMatch == nil {
+			ctx.LastInstanceMatch = make(map[int]*types.Instance)
 		}
-		ctx.lastInstanceMatch[c.TypeClass.Id] = matched
+		ctx.LastInstanceMatch[c.TypeClass.Id] = matched
 	}
 	seen.Release()
 	return nil
 }
 
-func (ctx *commonContext) unify(a, b types.Type) error {
+func (ctx *CommonContext) Unify(a, b types.Type) error {
 	a, b = types.RealType(a), types.RealType(b)
 	if a == b {
 		return nil
@@ -183,11 +183,11 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 			return nil
 		}
 		// unroll a
-		return ctx.unify(a.Link(), b)
+		return ctx.Unify(a.Link(), b)
 	}
 	if b, ok := b.(*types.RecursiveLink); ok {
 		// unroll b
-		return ctx.unify(a, b.Link())
+		return ctx.Unify(a, b.Link())
 	}
 
 	// unify type variables:
@@ -196,15 +196,15 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 	bvar, _ := b.(*types.Var)
 	switch {
 	case avar == nil && bvar != nil:
-		return ctx.unify(b, a)
+		return ctx.Unify(b, a)
 
 	case avar != nil:
 		if avar.IsGenericVar() {
 			return errors.New("Generic type-variable was not instantiated before unification")
 		}
 		// weak or unbound
-		if ctx.speculate {
-			ctx.stashLink(avar)
+		if ctx.Speculate {
+			ctx.StashLink(avar)
 		}
 		if bvar != nil {
 			if bvar.IsUnboundVar() && avar.Id() == bvar.Id() {
@@ -246,17 +246,17 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 	}
 	switch {
 	case underA == nil && underB != nil:
-		return ctx.unify(b, a)
+		return ctx.Unify(b, a)
 	case underB != nil: // both are aliases
 		// Const and Args are unified in the main switch below
-		if err := ctx.unify(underA, underB); err != nil {
+		if err := ctx.Unify(underA, underB); err != nil {
 			return err
 		}
 	case underA != nil: // only a is an alias
 		// If b is a type application, Const and Args are unified in the main switch below
 		if aliasB == nil {
 			// unify b with a's underlying type
-			return ctx.unify(underA, b)
+			return ctx.Unify(underA, b)
 		}
 	}
 
@@ -276,14 +276,14 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 		if !ok {
 			return errors.New("Failed to unify type-application with " + b.TypeName())
 		}
-		if err := ctx.unify(a.Const, b.Const); err != nil {
+		if err := ctx.Unify(a.Const, b.Const); err != nil {
 			return err
 		}
 		if len(a.Args) != len(b.Args) {
 			return errors.New("Cannot unify type-applications with differing arity")
 		}
 		for i := range a.Args {
-			if err := ctx.unify(a.Args[i], b.Args[i]); err != nil {
+			if err := ctx.Unify(a.Args[i], b.Args[i]); err != nil {
 				return err
 			}
 		}
@@ -301,23 +301,23 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 			return errors.New("Cannot unify arrows with differing arity")
 		}
 		for i := range a.Args {
-			if err := ctx.unify(a.Args[i], b.Args[i]); err != nil {
+			if err := ctx.Unify(a.Args[i], b.Args[i]); err != nil {
 				return err
 			}
 		}
-		if err := ctx.unify(a.Return, b.Return); err != nil {
+		if err := ctx.Unify(a.Return, b.Return); err != nil {
 			return err
 		}
 		return nil
 
 	case *types.Record:
 		if b, ok := b.(*types.Record); ok {
-			return ctx.unify(a.Row, b.Row)
+			return ctx.Unify(a.Row, b.Row)
 		}
 
 	case *types.Variant:
 		if b, ok := b.(*types.Variant); ok {
-			return ctx.unify(a.Row, b.Row)
+			return ctx.Unify(a.Row, b.Row)
 		}
 
 	case *types.RowExtend:
@@ -337,7 +337,7 @@ func (ctx *commonContext) unify(a, b types.Type) error {
 	return errors.New("Failed to unify " + a.TypeName() + " with " + b.TypeName())
 }
 
-func (ctx *commonContext) unifyLists(a, b types.TypeList) (xa, xb types.TypeList, err error) {
+func (ctx *CommonContext) unifyLists(a, b types.TypeList) (xa, xb types.TypeList, err error) {
 	i := 0
 	n := a.Len()
 	if b.Len() < n {
@@ -345,7 +345,7 @@ func (ctx *commonContext) unifyLists(a, b types.TypeList) (xa, xb types.TypeList
 	}
 	for i < n {
 		va, vb := a.Get(i), b.Get(i)
-		if err := ctx.unify(va, vb); err != nil {
+		if err := ctx.Unify(va, vb); err != nil {
 			return types.EmptyTypeList, types.EmptyTypeList, err
 		}
 		i++
@@ -353,7 +353,7 @@ func (ctx *commonContext) unifyLists(a, b types.TypeList) (xa, xb types.TypeList
 	return a.Slice(i, a.Len()), b.Slice(i, b.Len()), nil
 }
 
-func (ctx *commonContext) unifyRows(a, b types.Type) error {
+func (ctx *CommonContext) unifyRows(a, b types.Type) error {
 	ma, ra, err := types.FlattenRowType(a)
 	if err != nil {
 		return err
@@ -394,28 +394,28 @@ func (ctx *commonContext) unifyRows(a, b types.Type) error {
 	za, zb := xa.Len() == 0, xb.Len() == 0
 	switch {
 	case za && zb: // all labels match
-		return ctx.unify(ra, rb)
+		return ctx.Unify(ra, rb)
 	case za && !zb: // labels missing in mb
-		return ctx.unify(rb, &types.RowExtend{Row: ra, Labels: xb.Build()})
+		return ctx.Unify(rb, &types.RowExtend{Row: ra, Labels: xb.Build()})
 	case !za && zb: // labels missing in ma
-		return ctx.unify(ra, &types.RowExtend{Row: rb, Labels: xa.Build()})
+		return ctx.Unify(ra, &types.RowExtend{Row: rb, Labels: xa.Build()})
 	default: // labels missing in both ma/mb
 		switch ra := ra.(type) {
 		case *types.RowEmpty:
 			// will result in an error:
-			return ctx.unify(ra, &types.RowExtend{Row: ctx.varTracker.New(0), Labels: xa.Build()})
+			return ctx.Unify(ra, &types.RowExtend{Row: ctx.VarTracker.New(0), Labels: xa.Build()})
 		case *types.Var:
 			if !ra.IsUnboundVar() {
 				return errors.New("Invalid state while unifying type-variables for rows")
 			}
-			tv := ctx.varTracker.New(ra.Level())
-			if err := ctx.unify(rb, &types.RowExtend{Row: tv, Labels: xb.Build()}); err != nil {
+			tv := ctx.VarTracker.New(ra.Level())
+			if err := ctx.Unify(rb, &types.RowExtend{Row: tv, Labels: xb.Build()}); err != nil {
 				return err
 			}
 			if ra.IsLinkVar() {
 				return errors.New("Invalid recursive row-types")
 			}
-			return ctx.unify(ra, &types.RowExtend{Row: tv, Labels: xa.Build()})
+			return ctx.Unify(ra, &types.RowExtend{Row: tv, Labels: xa.Build()})
 		}
 	}
 

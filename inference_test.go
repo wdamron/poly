@@ -32,6 +32,26 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
+func TestLiterals(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	env.Declare("x", TConst("int"))
+
+	constructVecX := func(env types.TypeEnv, level int) types.Type {
+		return TApp(TConst("vec"), env.Lookup("x"))
+	}
+
+	ty, err := ctx.Infer(Let("vec", Literal("[x]", constructVecX), Var("vec")), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	typeString := types.TypeString(ty)
+	if typeString != "vec[int]" {
+		t.Fatalf("type: %s", typeString)
+	}
+}
+
 func TestRefs(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
@@ -495,6 +515,7 @@ func TestHigherKindedTypes(t *testing.T) {
 	// class Functor 'f where
 	//   fmap :: (('a -> 'b), 'f['a]) -> 'f['b]
 	Functor, err := env.DeclareTypeClass("Functor", func(f *types.Var) types.MethodSet {
+		f.SetWeak()
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
 			"fmap": TArrow2(TArrow1(a, b), TApp(f, a), TApp(f, b)),
@@ -508,6 +529,7 @@ func TestHigherKindedTypes(t *testing.T) {
 	//   pure  :: 'a -> 'f['a]
 	//   (<*>) :: ('f[('a -> 'b)], 'f['a]) -> 'f['b]
 	Applicative, err := env.DeclareTypeClass("Applicative", func(f *types.Var) types.MethodSet {
+		f.SetWeak()
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
 			"pure":  TArrow1(a, TApp(f, a)),
@@ -521,6 +543,7 @@ func TestHigherKindedTypes(t *testing.T) {
 	// class (Applicative 'm) => Monad 'm where
 	//   (>>=) :: ('m['a], (a -> 'm['b])) -> 'm['b]
 	Monad, err := env.DeclareTypeClass("Monad", func(m *types.Var) types.MethodSet {
+		m.SetWeak()
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
 			"(>>=)": TArrow2(TApp(m, a), TArrow1(a, TApp(m, b)), TApp(m, b)),

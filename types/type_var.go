@@ -31,6 +31,8 @@ const (
 	WeakVarLevel = 1 << 29
 )
 
+var _ Type = (*Var)(nil)
+
 // Type-variable
 type Var struct {
 	constraints []InstanceConstraint

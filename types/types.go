@@ -26,6 +26,27 @@ import (
 	"errors"
 )
 
+var (
+	_ Type = (*Var)(nil)
+	_ Type = (*Const)(nil)
+	_ Type = (*App)(nil)
+	_ Type = (*Arrow)(nil)
+	_ Type = (*Method)(nil)
+	_ Type = (*Record)(nil)
+	_ Type = (*Variant)(nil)
+	_ Type = (*RowExtend)(nil)
+	_ Type = (*RowEmpty)(nil)
+	_ Type = (*RecursiveLink)(nil)
+)
+
+// TypeEnv is a type-enviroment containing mappings from identifiers to declared types.
+type TypeEnv interface {
+	// Lookup the type for an identifier in the environment or its parent environment(s).
+	Lookup(name string) Type
+	// Declare a type for an identifier within the type environment.
+	Assign(name string, t Type)
+}
+
 // Type is the base for all types.
 type Type interface {
 	TypeName() string
@@ -55,20 +76,62 @@ func IsRefType(app *App) bool {
 	return c == RefType
 }
 
-var (
-	_ Type = (*Var)(nil)
-	_ Type = (*Const)(nil)
-	_ Type = (*App)(nil)
-	_ Type = (*Arrow)(nil)
-	_ Type = (*Method)(nil)
-	_ Type = (*Record)(nil)
-	_ Type = (*Variant)(nil)
-	_ Type = (*RowExtend)(nil)
-	_ Type = (*RowEmpty)(nil)
-)
-
 // Create an application of RefType (a mutable reference-type) with a single referenced type-parameter.
 func NewRef(deref Type) *App { return &App{Const: RefType, Args: []Type{deref}} }
+
+// Type constant: `int`, `bool`, etc
+type Const struct {
+	Name string
+}
+
+// Type application: `list[int]`
+type App struct {
+	Const Type
+	Args  []Type
+	// Aliased type (optional)
+	Underlying Type
+	Flags      TypeFlags
+}
+
+// Function type: `(int, int) -> int`
+type Arrow struct {
+	Args   []Type
+	Return Type
+	// Method which the function instantiates, or nil
+	Method *Method
+	Flags  TypeFlags
+}
+
+// Type-class method type: `('a, int) -> 'a`
+type Method struct {
+	TypeClass *TypeClass
+	Name      string
+	Flags     TypeFlags
+}
+
+// Record type: `{a : int}`
+type Record struct {
+	Row   Type
+	Flags TypeFlags
+}
+
+// Tagged (ad-hoc) variant-type: `[i : int, s : string]`
+type Variant struct {
+	Row   Type
+	Flags TypeFlags
+}
+
+// Row extension: `<a : _ , b : _ | ...>`
+type RowExtend struct {
+	Row    Type
+	Labels TypeMap
+	Flags  TypeFlags
+}
+
+var RowEmptyPointer = (*RowEmpty)(nil)
+
+// Empty row: `<>`
+type RowEmpty struct{}
 
 // "Var"
 func (t *Var) TypeName() string { return "Var" }
@@ -165,60 +228,6 @@ func (t *RowEmpty) IsGeneric() bool { return false }
 
 // RowEmpty never contains mutable reference-types.
 func (t *RowEmpty) HasRefs() bool { return false }
-
-// Type constant: `int`, `bool`, etc
-type Const struct {
-	Name string
-}
-
-// Type application: `list[int]`
-type App struct {
-	Const Type
-	Args  []Type
-	// Aliased type (optional)
-	Underlying Type
-	Flags      TypeFlags
-}
-
-// Function type: `(int, int) -> int`
-type Arrow struct {
-	Args   []Type
-	Return Type
-	// Method which the function instantiates, or nil
-	Method *Method
-	Flags  TypeFlags
-}
-
-// Type-class method type: `('a, int) -> 'a`
-type Method struct {
-	TypeClass *TypeClass
-	Name      string
-	Flags     TypeFlags
-}
-
-// Record type: `{a : int}`
-type Record struct {
-	Row   Type
-	Flags TypeFlags
-}
-
-// Tagged (ad-hoc) variant-type: `[i : int, s : string]`
-type Variant struct {
-	Row   Type
-	Flags TypeFlags
-}
-
-// Row extension: `<a : _ , b : _ | ...>`
-type RowExtend struct {
-	Row    Type
-	Labels TypeMap
-	Flags  TypeFlags
-}
-
-var RowEmptyPointer = (*RowEmpty)(nil)
-
-// Empty row: `<>`
-type RowEmpty struct{}
 
 // Get the underlying type for a chain of linked type-variables, when applicable.
 func RealType(t Type) Type {

@@ -20,22 +20,22 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package poly
+package typeutil
 
 import (
 	"github.com/wdamron/poly/types"
 )
 
-func (ctx *commonContext) instantiate(level int, t types.Type) types.Type {
+func (ctx *CommonContext) Instantiate(level int, t types.Type) types.Type {
 	if !t.IsGeneric() {
 		return t
 	}
-	ctx.clearInstantiationLookup()
-	ctx.clearRecursiveInstantiationLookup()
+	ctx.ClearInstantiationLookup()
+	ctx.ClearRecursiveInstantiationLookup()
 	return ctx.visitInstantiate(level, t)
 }
 
-func (ctx *commonContext) visitInstantiate(level int, t types.Type) types.Type {
+func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 	if !t.IsGeneric() {
 		return t
 	}
@@ -43,11 +43,11 @@ func (ctx *commonContext) visitInstantiate(level int, t types.Type) types.Type {
 	switch t := t.(type) {
 	case *types.Var:
 		id := t.Id()
-		if tv, ok := ctx.instLookup[id]; ok {
+		if tv, ok := ctx.InstLookup[id]; ok {
 			return tv
 		}
 
-		tv := ctx.varTracker.New(level)
+		tv := ctx.VarTracker.New(level)
 		if t.IsWeakVar() {
 			tv.SetWeak()
 		}
@@ -56,12 +56,12 @@ func (ctx *commonContext) visitInstantiate(level int, t types.Type) types.Type {
 		constraints2 := make([]types.InstanceConstraint, len(constraints))
 		copy(constraints2, constraints)
 		tv.SetConstraints(constraints2)
-		ctx.instLookup[id] = tv
+		ctx.InstLookup[id] = tv
 		return tv
 
 	case *types.RecursiveLink:
 		rec := t.Recursive
-		if next := ctx.recInstLookup[t.Recursive.Id]; next != nil {
+		if next := ctx.RecInstLookup[t.Recursive.Id]; next != nil {
 			return &types.RecursiveLink{Recursive: next, Index: t.Index}
 		}
 		next := &types.Recursive{
@@ -73,7 +73,7 @@ func (ctx *commonContext) visitInstantiate(level int, t types.Type) types.Type {
 			Flags:        rec.Flags,
 		}
 		copy(next.Types, rec.Types)
-		ctx.recInstLookup[t.Recursive.Id] = next
+		ctx.RecInstLookup[t.Recursive.Id] = next
 		for i, ti := range next.Types {
 			next.Types[i] = ctx.visitInstantiate(level, ti).(*types.App)
 		}

@@ -35,6 +35,9 @@ func ExprString(e Expr) string {
 
 func exprString(sb *strings.Builder, simple bool, e Expr) {
 	switch e := e.(type) {
+	case *Literal:
+		sb.WriteString(e.Syntax)
+
 	case *Var:
 		sb.WriteString(e.Name)
 

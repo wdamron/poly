@@ -34,44 +34,48 @@ type Expr interface {
 	Type() types.Type
 }
 
-// "Var"
-func (e *Var) ExprName() string { return "Var" }
+var (
+	_ Expr = (*Literal)(nil)
+	_ Expr = (*Var)(nil)
+	_ Expr = (*Call)(nil)
+	_ Expr = (*Func)(nil)
+	_ Expr = (*Let)(nil)
+	_ Expr = (*LetGroup)(nil)
+	_ Expr = (*RecordSelect)(nil)
+	_ Expr = (*RecordExtend)(nil)
+	_ Expr = (*RecordRestrict)(nil)
+	_ Expr = (*RecordEmpty)(nil)
+	_ Expr = (*Variant)(nil)
+	_ Expr = (*Match)(nil)
+)
 
-// "Call"
-func (e *Call) ExprName() string { return "Call" }
+// Literal value
+type Literal struct {
+	// Syntax is a string representation of the literal value. The syntax will be printed when the literal is printed.
+	Syntax string
+	// Construct should produce a type at the given binding-level. The constructed type may include
+	// types derived from variables which are already in scope (retrieved from the type-environment).
+	Construct func(types.TypeEnv, int) types.Type
+	inferred  types.Type
+}
 
-// "Func"
-func (e *Func) ExprName() string { return "Func" }
+// Returns the syntax of e.
+func (e *Literal) ExprName() string { return e.Syntax }
 
-// "Let"
-func (e *Let) ExprName() string { return "Let" }
+// Get the inferred (or assigned) type of e.
+func (e *Literal) Type() types.Type { return types.RealType(e.inferred) }
 
-// "LetGroup"
-func (e *LetGroup) ExprName() string { return "LetGroup" }
-
-// "RecordSelect"
-func (e *RecordSelect) ExprName() string { return "RecordSelect" }
-
-// "RecordExtend"
-func (e *RecordExtend) ExprName() string { return "RecordExtend" }
-
-// "RecordRestrict"
-func (e *RecordRestrict) ExprName() string { return "RecordRestrict" }
-
-// "RecordEmpty"
-func (e *RecordEmpty) ExprName() string { return "RecordEmpty" }
-
-// "Variant"
-func (e *Variant) ExprName() string { return "Variant" }
-
-// "Match"
-func (e *Match) ExprName() string { return "Match" }
+// Assign a type to e. Type assignments should occur indirectly, during inference.
+func (e *Literal) SetType(t types.Type) { e.inferred = t }
 
 // Variable
 type Var struct {
 	Name     string
 	inferred types.Type
 }
+
+// "Var"
+func (e *Var) ExprName() string { return "Var" }
 
 // Get the inferred (or assigned) type of e.
 func (e *Var) Type() types.Type { return types.RealType(e.inferred) }
@@ -86,6 +90,9 @@ type Call struct {
 	inferred     types.Type
 	inferredFunc *types.Arrow
 }
+
+// "Call"
+func (e *Call) ExprName() string { return "Call" }
 
 // Get the inferred (or assigned) type of e.
 func (e *Call) Type() types.Type { return types.RealType(e.inferred) }
@@ -106,6 +113,9 @@ type Func struct {
 	inferred *types.Arrow
 }
 
+// "Func"
+func (e *Func) ExprName() string { return "Func" }
+
 // Get the inferred (or assigned) type of e.
 func (e *Func) Type() types.Type { return types.RealType(e.inferred) }
 
@@ -125,6 +135,9 @@ type Let struct {
 	Body  Expr
 }
 
+// "Let"
+func (e *Let) ExprName() string { return "Let" }
+
 // Get the inferred (or assigned) type of e.
 func (e *Let) Type() types.Type { return e.Body.Type() }
 
@@ -133,6 +146,9 @@ type LetGroup struct {
 	Vars []LetBinding
 	Body Expr
 }
+
+// "LetGroup"
+func (e *LetGroup) ExprName() string { return "LetGroup" }
 
 // Get the inferred (or assigned) type of e.
 func (e *LetGroup) Type() types.Type { return e.Body.Type() }
@@ -153,6 +169,9 @@ type RecordSelect struct {
 	inferred types.Type
 }
 
+// "RecordSelect"
+func (e *RecordSelect) ExprName() string { return "RecordSelect" }
+
 // Get the inferred (or assigned) type of e.
 func (e *RecordSelect) Type() types.Type { return types.RealType(e.inferred) }
 
@@ -165,6 +184,9 @@ type RecordExtend struct {
 	Labels   []LabelValue
 	inferred *types.Record
 }
+
+// "RecordExtend"
+func (e *RecordExtend) ExprName() string { return "RecordExtend" }
 
 // Get the inferred (or assigned) type of e.
 func (e *RecordExtend) Type() types.Type { return types.RealType(e.inferred) }
@@ -188,6 +210,9 @@ type RecordRestrict struct {
 	inferred *types.Record
 }
 
+// "RecordRestrict"
+func (e *RecordRestrict) ExprName() string { return "RecordRestrict" }
+
 // Get the inferred (or assigned) type of e.
 func (e *RecordRestrict) Type() types.Type { return types.RealType(e.inferred) }
 
@@ -198,6 +223,9 @@ func (e *RecordRestrict) SetType(rt *types.Record) { e.inferred = rt }
 type RecordEmpty struct {
 	inferred *types.Record
 }
+
+// "RecordEmpty"
+func (e *RecordEmpty) ExprName() string { return "RecordEmpty" }
 
 // Get the inferred (or assigned) type of e.
 func (e *RecordEmpty) Type() types.Type { return types.RealType(e.inferred) }
@@ -210,6 +238,9 @@ type Variant struct {
 	Label string
 	Value Expr
 }
+
+// "Variant"
+func (e *Variant) ExprName() string { return "Variant" }
 
 // Get the inferred (or assigned) type of e.
 func (e *Variant) Type() types.Type { return e.Value.Type() }
@@ -228,6 +259,9 @@ type Match struct {
 	Default  *MatchCase
 	inferred types.Type
 }
+
+// "Match"
+func (e *Match) ExprName() string { return "Match" }
 
 // Get the inferred (or assigned) type of e.
 func (e *Match) Type() types.Type { return types.RealType(e.inferred) }
