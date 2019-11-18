@@ -93,7 +93,9 @@ type App struct {
 	Args  []Type
 	// Aliased type (optional)
 	Underlying Type
-	Flags      TypeFlags
+	// Source which this type was instantiated from, or nil
+	Source *App
+	Flags  TypeFlags
 }
 
 // Function type: `(int, int) -> int`
@@ -102,6 +104,8 @@ type Arrow struct {
 	Return Type
 	// Method which the function instantiates, or nil
 	Method *Method
+	// Source which this type was instantiated from, or nil
+	Source *Arrow
 	Flags  TypeFlags
 }
 
@@ -112,22 +116,30 @@ type Method struct {
 	Flags     TypeFlags
 }
 
+var RecordEmptyPointer = &RowExtend{Row: RowEmptyPointer}
+
 // Record type: `{a : int}`
 type Record struct {
-	Row   Type
-	Flags TypeFlags
+	Row Type
+	// Source which this type was instantiated from, or nil
+	Source *Record
+	Flags  TypeFlags
 }
 
 // Tagged (ad-hoc) variant-type: `[i : int, s : string]`
 type Variant struct {
-	Row   Type
-	Flags TypeFlags
+	Row Type
+	// Source which this type was instantiated from, or nil
+	Source *Variant
+	Flags  TypeFlags
 }
 
 // Row extension: `<a : _ , b : _ | ...>`
 type RowExtend struct {
 	Row    Type
 	Labels TypeMap
+	// Source which this type was instantiated from, or nil
+	Source *RowExtend
 	Flags  TypeFlags
 }
 

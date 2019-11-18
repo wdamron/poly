@@ -68,6 +68,8 @@ func (r *Recursive) GetType(name string) *App {
 type RecursiveLink struct {
 	Recursive *Recursive
 	Index     int
+	// Source which this type was instantiated from, or nill
+	Source *RecursiveLink
 }
 
 // "Recursive"

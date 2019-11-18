@@ -43,10 +43,11 @@ type TypeClass struct {
 
 	// partially-grouped instances for faster lookups:
 
-	tconst    map[string]*Instance
-	tappconst map[string][]*Instance
-	trow      []*Instance
-	tmisc     []*Instance
+	tconst    map[string]*Instance   // mapped by name
+	tappconst map[string][]*Instance // grouped by constructor name
+	trecord   map[string][]*Instance // grouped by first label
+	tvariant  map[string][]*Instance // grouped by first label
+	tmisc     []*Instance            // instances not in the above groups
 }
 
 // Instance of a parameterized type-class
@@ -103,9 +104,31 @@ func (tc *TypeClass) AddInstance(param Type, methods MethodSet, methodNames map[
 				tc.tappconst = make(map[string][]*Instance)
 			}
 			tc.tappconst[c.Name] = append(tc.tappconst[c.Name], inst)
+			break
 		}
-	case *RowExtend:
-		tc.trow = append(tc.trow, inst)
+		tc.tmisc = append(tc.tmisc, inst)
+	case *Record:
+		if row, ok := param.Row.(*RowExtend); ok {
+			if first, _ := row.Labels.First(); first != "" {
+				if tc.trecord == nil {
+					tc.trecord = make(map[string][]*Instance)
+				}
+				tc.trecord[first] = append(tc.trecord[first], inst)
+				break
+			}
+		}
+		tc.tmisc = append(tc.tmisc, inst)
+	case *Variant:
+		if row, ok := param.Row.(*RowExtend); ok {
+			if first, _ := row.Labels.First(); first != "" {
+				if tc.tvariant == nil {
+					tc.tvariant = make(map[string][]*Instance)
+				}
+				tc.tvariant[first] = append(tc.tvariant[first], inst)
+				break
+			}
+		}
+		tc.tmisc = append(tc.tmisc, inst)
 	default:
 		tc.tmisc = append(tc.tmisc, inst)
 	}
@@ -156,8 +179,22 @@ func (tc *TypeClass) MatchInstance(param Type, found func(*Instance) bool) (matc
 		} else {
 			matched, _ = tc.matchInstance(seen, found)
 		}
-	case *RowExtend:
-		matched, _ = tc.matchRowExtendInstance(seen, found)
+	case *Record:
+		if row, ok := param.Row.(*RowExtend); ok {
+			if firstLabel, _ := row.Labels.First(); firstLabel != "" {
+				matched, _ = tc.matchRecordInstance(firstLabel, seen, found)
+				break
+			}
+		}
+		matched, _ = tc.matchInstance(seen, found)
+	case *Variant:
+		if row, ok := param.Row.(*RowExtend); ok {
+			if firstLabel, _ := row.Labels.First(); firstLabel != "" {
+				matched, _ = tc.matchVariantInstance(firstLabel, seen, found)
+				break
+			}
+		}
+		matched, _ = tc.matchInstance(seen, found)
 	default:
 		matched, _ = tc.matchInstance(seen, found)
 	}
@@ -276,19 +313,41 @@ func (tc *TypeClass) matchAppConstInstance(name string, seen util.IntDedupeMap, 
 	return false, true
 }
 
-func (tc *TypeClass) matchRowExtendInstance(seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+func (tc *TypeClass) matchRecordInstance(firstLabel string, seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
 	if seen[tc.Id] {
 		return false, true
 	}
 	seen[tc.Id] = true
 	for _, sub := range tc.Sub {
-		if ok, shouldContinue = sub.matchRowExtendInstance(seen, found); !shouldContinue {
+		if ok, shouldContinue = sub.matchRecordInstance(firstLabel, seen, found); !shouldContinue {
 			return ok, false
 		}
 	}
-	for _, inst := range tc.trow {
-		if found(inst) {
-			return true, false
+	if tc.trecord != nil {
+		for _, inst := range tc.trecord[firstLabel] {
+			if found(inst) {
+				return true, false
+			}
+		}
+	}
+	return false, true
+}
+
+func (tc *TypeClass) matchVariantInstance(firstLabel string, seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+	if seen[tc.Id] {
+		return false, true
+	}
+	seen[tc.Id] = true
+	for _, sub := range tc.Sub {
+		if ok, shouldContinue = sub.matchVariantInstance(firstLabel, seen, found); !shouldContinue {
+			return ok, false
+		}
+	}
+	if tc.tvariant != nil {
+		for _, inst := range tc.tvariant[firstLabel] {
+			if found(inst) {
+				return true, false
+			}
 		}
 	}
 	return false, true

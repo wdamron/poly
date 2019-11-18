@@ -294,8 +294,11 @@ func (e *TypeEnv) LookupTypeClass(name string) *types.TypeClass {
 // The type-class which the instance implements will be modified to add an instance entry; changes will be visible across all uses
 // of the type-class, and changes must not be made to type-classes concurrently.
 func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodNames map[string]string) (*types.Instance, error) {
-	if _, isFunction := param.(*types.Arrow); isFunction {
-		return nil, errors.New("Unsupported function instance for type-class " + tc.Name)
+	switch param.(type) {
+	case *types.Const, *types.App, *types.Record, *types.Variant:
+		// ok
+	default:
+		return nil, errors.New("Type-class instance must be a type constant, type application, variant type, or record type")
 	}
 	// prevent overlapping instances:
 	var conflict *types.Instance

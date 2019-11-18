@@ -62,7 +62,7 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 	case *types.RecursiveLink:
 		rec := t.Recursive
 		if next := ctx.RecInstLookup[t.Recursive.Id]; next != nil {
-			return &types.RecursiveLink{Recursive: next, Index: t.Index}
+			return &types.RecursiveLink{Recursive: next, Index: t.Index, Source: t}
 		}
 		next := &types.Recursive{
 			Id:           rec.Id,
@@ -78,7 +78,7 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 			next.Types[i] = ctx.visitInstantiate(level, ti).(*types.App)
 		}
 		next.Flags &^= types.ContainsGenericVars
-		return &types.RecursiveLink{Recursive: next, Index: t.Index}
+		return &types.RecursiveLink{Recursive: next, Index: t.Index, Source: t}
 
 	case *types.App:
 		args := make([]types.Type, len(t.Args))
@@ -89,14 +89,14 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 		if t.Underlying != nil {
 			underlying = ctx.visitInstantiate(level, t.Underlying)
 		}
-		return &types.App{Const: ctx.visitInstantiate(level, t.Const), Args: args, Underlying: underlying, Flags: t.Flags &^ types.ContainsGenericVars}
+		return &types.App{Const: ctx.visitInstantiate(level, t.Const), Args: args, Underlying: underlying, Source: t}
 
 	case *types.Arrow:
 		args := make([]types.Type, len(t.Args))
 		for i, arg := range t.Args {
 			args[i] = ctx.visitInstantiate(level, arg)
 		}
-		return &types.Arrow{Args: args, Return: ctx.visitInstantiate(level, t.Return), Method: t.Method}
+		return &types.Arrow{Args: args, Return: ctx.visitInstantiate(level, t.Return), Method: t.Method, Source: t}
 
 	case *types.Method:
 		arrow := ctx.visitInstantiate(level, t.TypeClass.Methods[t.Name]).(*types.Arrow)
@@ -104,10 +104,10 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 		return arrow
 
 	case *types.Record:
-		return &types.Record{Row: ctx.visitInstantiate(level, t.Row)}
+		return &types.Record{Row: ctx.visitInstantiate(level, t.Row), Source: t}
 
 	case *types.Variant:
-		return &types.Variant{Row: ctx.visitInstantiate(level, t.Row)}
+		return &types.Variant{Row: ctx.visitInstantiate(level, t.Row), Source: t}
 
 	case *types.RowExtend:
 		m := t.Labels
@@ -127,7 +127,7 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 		} else if _, ok := row.(*types.RowEmpty); !ok {
 			row = ctx.visitInstantiate(level, t.Row)
 		}
-		return &types.RowExtend{Row: row, Labels: mb.Build()}
+		return &types.RowExtend{Row: row, Labels: mb.Build(), Source: t}
 	}
 	panic("unexpected generic type " + t.TypeName())
 }

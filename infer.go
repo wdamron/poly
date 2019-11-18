@@ -179,11 +179,12 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			return nil, err
 		}
 
-		args, ret, err := ti.matchFuncType(len(e.Args), ft)
+		arrow, err := ti.matchFuncType(len(e.Args), ft)
 		if err != nil {
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
+		args, ret := arrow.Args, arrow.Return
 		for i, arg := range e.Args {
 			ta, err := ti.infer(env, level, arg)
 			if err != nil {
@@ -346,35 +347,35 @@ func (ti *InferenceContext) splitRecord(env *TypeEnv, level int, recordExpr ast.
 
 // If t is an unbound type-variable, instantiate a function with unbound type-variables for its arguments and return value;
 // otherwise, ensure t has the correct argument count.
-func (ti *InferenceContext) matchFuncType(argc int, t types.Type) (args []types.Type, ret types.Type, err error) {
+func (ti *InferenceContext) matchFuncType(argc int, t types.Type) (*types.Arrow, error) {
 	switch t := t.(type) {
 	case *types.Arrow:
 		if len(t.Args) != argc {
-			return t.Args, t.Return, errors.New("Unexpected number of arguments for applied function")
+			return t, errors.New("Unexpected number of arguments for applied function")
 		}
-		return t.Args, t.Return, nil
+		return t, nil
 
 	case *types.Var:
 		switch {
 		case t.IsLinkVar():
 			return ti.matchFuncType(argc, t.Link())
 		case t.IsUnboundVar():
-			args = make([]types.Type, argc)
+			args := make([]types.Type, argc)
 			vars := ti.common.VarTracker.NewList(t.Level(), argc+1)
 			tv, tail := vars.Head(), vars.Tail()
 			for i := 0; i < argc; i++ {
 				args[i] = tv
 				tv, tail = tail.Head(), tail.Tail()
 			}
-			ret = tv
-			t.SetLink(&types.Arrow{Args: args, Return: ret})
-			return args, ret, nil
+			arrow := &types.Arrow{Args: args, Return: tv}
+			t.SetLink(arrow)
+			return arrow, nil
 		default:
-			return nil, nil, errors.New("Type variable for applied function has not been instantiated")
+			return nil, errors.New("Type variable for applied function has not been instantiated")
 		}
 	}
 
-	return nil, nil, errors.New("Unexpected type " + t.TypeName() + " for applied function")
+	return nil, errors.New("Unexpected type " + t.TypeName() + " for applied function")
 }
 
 // https://github.com/tomprimozic/type-systems/blob/master/extensible_rows2/infer.ml#L287

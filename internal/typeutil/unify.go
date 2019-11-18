@@ -25,7 +25,6 @@ package typeutil
 import (
 	"errors"
 
-	"github.com/wdamron/poly/internal/util"
 	"github.com/wdamron/poly/types"
 )
 
@@ -116,8 +115,8 @@ func (ctx *CommonContext) applyConstraints(a *types.Var, b types.Type) error {
 	}
 	bv, bIsVar := b.(*types.Var)
 	if bIsVar {
+		// propagate instance constraints to the link target
 		bConstraints := bv.Constraints()
-		// merge instance constraints into the link target
 		if ctx.Speculate {
 			// don't modify the existing slice of constraints
 			ctx.StashLink(bv)
@@ -132,13 +131,8 @@ func (ctx *CommonContext) applyConstraints(a *types.Var, b types.Type) error {
 		return nil
 	}
 
-	// evaluate instance constraints (find a matching instance for each type-class)
-	seen := util.NewIntDedupeMap()
+	// eliminate instance constraints (find a matching instance for each type-class)
 	for _, c := range aConstraints {
-		if seen[c.TypeClass.Id] {
-			continue
-		}
-		seen[c.TypeClass.Id] = true
 		var matched *types.Instance
 		if ctx.LastInstanceMatch != nil {
 			if inst, ok := ctx.LastInstanceMatch[c.TypeClass.Id]; ok && ctx.CanUnify(b, ctx.Instantiate(a.Level(), inst.Param)) {
@@ -155,7 +149,6 @@ func (ctx *CommonContext) applyConstraints(a *types.Var, b types.Type) error {
 			})
 		}
 		if matched == nil {
-			seen.Release()
 			return errors.New("No matching instance found for type-class " + c.TypeClass.Name)
 		}
 		if ctx.LastInstanceMatch == nil {
@@ -163,7 +156,6 @@ func (ctx *CommonContext) applyConstraints(a *types.Var, b types.Type) error {
 		}
 		ctx.LastInstanceMatch[c.TypeClass.Id] = matched
 	}
-	seen.Release()
 	return nil
 }
 
