@@ -26,6 +26,24 @@
 //
 // The implementation is based on an OCaml library by Tom Primozic.
 //
+//
+// Supported Features:
+//
+// * Extensible records and variants with scoped labels
+//
+// * Generic type classes, constructor classes, and parametric overloading
+//
+// * Limited/explicit (type class) subtyping with multiple inheritance
+//
+// * Mutually-recursive (generic) function expressions within grouped let bindings
+//
+// * Mutually-recursive (generic) data types
+//
+// * Transparently aliased (generic) types
+//
+// * Mutable references
+//
+//
 // Links:
 //
 // * extensible_rows2 (OCaml implementation): https://github.com/tomprimozic/type-systems/tree/master/extensible_rows2

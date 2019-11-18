@@ -188,6 +188,10 @@ func (e *TypeEnv) DeclareInvariant(name string, t types.Type) { e.Types[name] = 
 // Assign is an alias for DeclareInvariant.
 func (e *TypeEnv) Assign(name string, t types.Type) { e.Types[name] = t }
 
+// Remove the assigned type for an identifier within the type environment. Parent environment(s) will not be affected,
+// and the identifier's type will still be visible if defined in a parent environment.
+func (e *TypeEnv) Remove(name string) { delete(e.Types, name) }
+
 // Lookup the type for an identifier in the environment or its parent environment(s).
 func (e *TypeEnv) Lookup(name string) types.Type {
 	if t, ok := e.Types[name]; ok {

@@ -245,18 +245,23 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 		underB = aliasB.Underlying
 	}
 	switch {
-	case underA == nil && underB != nil:
-		return ctx.Unify(b, a)
-	case underB != nil: // both are aliases
-		// Const and Args are unified in the main switch below
-		if err := ctx.Unify(underA, underB); err != nil {
-			return err
-		}
-	case underA != nil: // only a is an alias
+	case underA != nil && underB == nil: // only a is an alias
 		// If b is a type application, Const and Args are unified in the main switch below
 		if aliasB == nil {
 			// unify b with a's underlying type
 			return ctx.Unify(underA, b)
+		}
+	case underA == nil && underB != nil: // only b is an alias
+		// If b is a type application, Const and Args are unified in the main switch below
+		if aliasA == nil {
+			// unify b with a's underlying type
+			return ctx.Unify(underB, a)
+		}
+		return ctx.Unify(b, a)
+	case underA != nil: // both are aliases
+		// Const and Args are unified in the main switch below
+		if err := ctx.Unify(underA, underB); err != nil {
+			return err
 		}
 	}
 

@@ -8,7 +8,17 @@ import "github.com/wdamron/poly"
 
 The type-system is an extension of [Hindley-Milner](https://en.wikipedia.org/wiki/Hindley–Milner_type_system) based on Daan Leijen's paper: [Extensible Records with Scoped Labels (Microsoft Research)](https://www.microsoft.com/en-us/research/publication/extensible-records-with-scoped-labels/).
 
-The implementation is based on an [OCaml library](https://github.com/tomprimozic/type-systems/) by Tom Primozic.
+The core of the implementation is based on an [OCaml library](https://github.com/tomprimozic/type-systems/) by Tom Primozic.
+
+## Supported Features
+
+* Extensible records and variants with scoped labels
+* Generic type classes, constructor classes, and parametric overloading
+* Limited/explicit (type class) subtyping with multiple inheritance
+* Mutually-recursive (generic) function expressions within grouped let bindings
+* Mutually-recursive (generic) data types
+* Transparently aliased (generic) types
+* Mutable references
 
 ## More Info
 

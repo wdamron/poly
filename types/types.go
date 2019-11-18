@@ -45,6 +45,9 @@ type TypeEnv interface {
 	Lookup(name string) Type
 	// Declare a type for an identifier within the type environment.
 	Assign(name string, t Type)
+	// Remove the assigned type for an identifier within the type environment. Parent environment(s) will not be affected,
+	// and the identifier's type will still be visible if defined in a parent environment.
+	Remove(name string)
 }
 
 // Type is the base for all types.

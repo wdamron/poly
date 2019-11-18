@@ -58,16 +58,16 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 				return nil, err
 			}
 			stashed := ti.common.Stash(env, e.Var)
-			env.Types[e.Var] = types.GeneralizeAtLevel(level, t)
+			env.Assign(e.Var, types.GeneralizeAtLevel(level, t))
 			t, err = ti.infer(env, level, e.Body)
-			delete(env.Types, e.Var)
+			env.Remove(e.Var)
 			ti.common.Unstash(env, stashed)
 			return t, err
 		}
 		// Allow self-references within function types:
 		tv := ti.common.VarTracker.New(level + 1)
 		stashed := ti.common.Stash(env, e.Var)
-		env.Types[e.Var] = tv
+		env.Assign(e.Var, tv)
 		t, err := ti.infer(env, level+1, e.Value)
 		if err != nil {
 			return nil, err
@@ -76,9 +76,9 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		env.Types[e.Var] = types.GeneralizeAtLevel(level, t)
+		env.Assign(e.Var, types.GeneralizeAtLevel(level, t))
 		t, err = ti.infer(env, level, e.Body)
-		delete(env.Types, e.Var)
+		env.Remove(e.Var)
 		ti.common.Unstash(env, stashed)
 		return t, err
 
@@ -99,7 +99,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			for _, bindNum := range scc {
 				v := e.Vars[bindNum]
 				stashed += ti.common.Stash(env, v.Var)
-				env.Types[v.Var] = tv
+				env.Assign(v.Var, tv)
 				tv, tail = tail.Head(), tail.Tail()
 			}
 			// Infer types:
@@ -113,13 +113,13 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 					for i := 0; i < stashed; i++ {
 						existing := ti.common.EnvStash[len(ti.common.EnvStash)-(1+i)]
 						if existing.Name == v.Var {
-							env.Types[v.Var] = existing.Type
+							env.Assign(v.Var, existing.Type)
 							exists = true
 							break
 						}
 					}
 					if !exists {
-						delete(env.Types, v.Var)
+						env.Remove(v.Var)
 					}
 				}
 				t, err := ti.infer(env, level+1, v.Value)
@@ -132,7 +132,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 				}
 				// Restore the previously stashed/removed type-variable:
 				if !isFunc {
-					env.Types[v.Var] = tv
+					env.Assign(v.Var, tv)
 				}
 				tv, tail = tail.Head(), tail.Tail()
 			}
@@ -140,13 +140,13 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			tv, tail = vars.Head(), vars.Tail()
 			for _, bindNum := range scc {
 				v := e.Vars[bindNum]
-				env.Types[v.Var] = types.GeneralizeAtLevel(level, tv)
+				env.Assign(v.Var, types.GeneralizeAtLevel(level, tv))
 				tv, tail = tail.Head(), tail.Tail()
 			}
 		}
 		t, err := ti.infer(env, level, e.Body)
 		for _, v := range e.Vars {
-			delete(env.Types, v.Var)
+			env.Remove(v.Var)
 		}
 		ti.common.Unstash(env, stashed)
 		return t, err
@@ -159,12 +159,12 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		for i, name := range e.ArgNames {
 			stashed += ti.common.Stash(env, name)
 			args[i] = tv
-			env.Types[name] = tv
+			env.Assign(name, tv)
 			tv, tail = tail.Head(), tail.Tail()
 		}
 		ret, err := ti.infer(env, level, e.Body)
 		for _, name := range e.ArgNames {
-			delete(env.Types, name)
+			env.Remove(name)
 		}
 		ti.common.Unstash(env, stashed)
 		t := &types.Arrow{Args: args, Return: ret}
@@ -288,9 +288,9 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		}
 		defaultType := ti.common.VarTracker.New(level)
 		stashed := ti.common.Stash(env, e.Default.Var)
-		env.Types[e.Default.Var] = &types.Variant{Row: defaultType}
+		env.Assign(e.Default.Var, &types.Variant{Row: defaultType})
 		retType, err := ti.infer(env, level, e.Default.Value)
-		delete(env.Types, e.Default.Var)
+		env.Remove(e.Default.Var)
 		ti.common.Unstash(env, stashed)
 		if err != nil {
 			return nil, err
@@ -394,10 +394,10 @@ func (ti *InferenceContext) inferCases(env *TypeEnv, level int, retType, rowType
 		c := cases[i]
 		variantType := tv
 		stashed := ti.common.Stash(env, c.Var)
-		env.Types[c.Var] = variantType
+		env.Assign(c.Var, variantType)
 		c.SetVariantType(variantType)
 		t, err := ti.infer(env, level, c.Value)
-		delete(env.Types, c.Var)
+		env.Remove(c.Var)
 		ti.common.Unstash(env, stashed)
 		if err != nil {
 			return nil, err
