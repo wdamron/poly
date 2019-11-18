@@ -107,7 +107,7 @@ func TRowEmpty() *types.RowEmpty {
 
 // Expressions:
 
-func Literal(syntax string, constructType func(types.TypeEnv, int) types.Type) *ast.Literal {
+func Literal(syntax string, constructType func(env types.TypeEnv, level int) (types.Type, error)) *ast.Literal {
 	return &ast.Literal{Syntax: syntax, Construct: constructType}
 }
 

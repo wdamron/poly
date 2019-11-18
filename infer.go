@@ -32,7 +32,12 @@ import (
 func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret types.Type, err error) {
 	switch e := e.(type) {
 	case *ast.Literal:
-		t := ti.common.Instantiate(level, e.Construct(env, level))
+		t, err := e.Construct(env, level)
+		if err != nil {
+			ti.invalid, ti.err = e, err
+			return t, err
+		}
+		t = ti.common.Instantiate(level, t)
 		if ti.annotate {
 			e.SetType(t)
 		}
@@ -388,11 +393,14 @@ func (ti *InferenceContext) matchFuncType(argc int, t types.Type) (*types.Arrow,
 // 			let other_cases_row = infer_cases env level return_ty rest_row_ty other_cases in
 // 			TRowExtend(LabelMap.singleton label [variant_ty], other_cases_row)
 func (ti *InferenceContext) inferCases(env *TypeEnv, level int, retType, rowType types.Type, cases []ast.MatchCase) (types.Type, error) {
+	// Each case extends an existing record formed from all subsequent cases.
+	// Visit cases in reverse order, accumulating labels and value types into the record as row-extensions.
 	extensions := make([]types.RowExtend, len(cases))
 	vars := ti.common.VarTracker.NewList(level, len(cases))
 	tv, tail := vars.Head(), vars.Tail()
 	for i := len(cases) - 1; i >= 0; i-- {
 		c := cases[i]
+		// Infer the return expression for the case with the variable-name temporarily bound in the environment:
 		variantType := tv
 		stashed := ti.common.Stash(env, c.Var)
 		env.Assign(c.Var, variantType)
@@ -403,13 +411,15 @@ func (ti *InferenceContext) inferCases(env *TypeEnv, level int, retType, rowType
 		if err != nil {
 			return nil, err
 		}
+		// Ensure all cases have matching return types:
 		if err := ti.common.Unify(retType, t); err != nil {
 			return nil, err
 		}
-		labels := types.SingletonTypeMap(c.Label, variantType)
-		extensions[i].Row, extensions[i].Labels = rowType, labels
+		// Extend the accumulated record:
+		extensions[i].Row, extensions[i].Labels = rowType, types.SingletonTypeMap(c.Label, variantType)
 		rowType = &extensions[i]
 		tv, tail = tail.Head(), tail.Tail()
 	}
+	// Return the accumulated record which maps each variant label to its associated type(s):
 	return rowType, nil
 }

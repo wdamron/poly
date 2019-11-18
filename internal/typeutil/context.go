@@ -119,6 +119,6 @@ func (ctx *CommonContext) UnstashLinks(count int) {
 	}
 	stash := ctx.LinkStash
 	for i := len(stash) - 1; i > len(stash)-1-count; i-- {
-		*stash[i].v = stash[i].prev
+		stash[i].Restore()
 	}
 }

@@ -55,7 +55,7 @@ type Literal struct {
 	Syntax string
 	// Construct should produce a type at the given binding-level. The constructed type may include
 	// types derived from variables which are already in scope (retrieved from the type-environment).
-	Construct func(types.TypeEnv, int) types.Type
+	Construct func(env types.TypeEnv, level int) (types.Type, error)
 	inferred  types.Type
 }
 

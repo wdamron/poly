@@ -30,9 +30,10 @@ func (ctx *CommonContext) Instantiate(level int, t types.Type) types.Type {
 	if !t.IsGeneric() {
 		return t
 	}
+	t = ctx.visitInstantiate(level, t)
 	ctx.ClearInstantiationLookup()
 	ctx.ClearRecursiveInstantiationLookup()
-	return ctx.visitInstantiate(level, t)
+	return t
 }
 
 func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
@@ -113,9 +114,19 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 		m := t.Labels
 		mb := m.Builder()
 		m.Range(func(label string, ts types.TypeList) bool {
+			generic := false
+			ts.Range(func(i int, t types.Type) bool {
+				generic = t.IsGeneric()
+				return generic
+			})
+			if !generic {
+				return true
+			}
 			lb := ts.Builder()
 			ts.Range(func(i int, t types.Type) bool {
-				lb.Set(i, ctx.visitInstantiate(level, t))
+				if t.IsGeneric() {
+					lb.Set(i, ctx.visitInstantiate(level, t))
+				}
 				return true
 			})
 			mb.Set(label, lb.Build())

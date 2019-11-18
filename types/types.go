@@ -260,13 +260,21 @@ func RealType(t Type) Type {
 }
 
 // Flatten row extensions into a single row.
-func FlattenRowType(t Type) (labels TypeMap, row Type, err error) {
-	lb := NewTypeMapBuilder()
-	row, err = flattenRowType(lb, t)
-	if err == nil {
-		labels = lb.Build()
+func FlattenRowType(t Type) (labels TypeMap, rest Type, err error) {
+	t = RealType(t)
+	switch t := t.(type) {
+	case *RowEmpty:
+		return EmptyTypeMap, t, nil
+	case *RowExtend:
+		if rest, ok := t.Row.(*RowEmpty); ok {
+			return t.Labels, rest, err
+		}
 	}
-	return
+	b := NewTypeMapBuilder()
+	if rest, err = flattenRowType(b, t); err != nil {
+		return EmptyTypeMap, nil, err
+	}
+	return b.Build(), rest, nil
 }
 
 func flattenRowType(labels TypeMapBuilder, t Type) (Type, error) {

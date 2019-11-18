@@ -172,6 +172,17 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 			if a.Recursive.Id != b.Recursive.Id || a.Index != b.Index {
 				return errors.New("Failed to unify recursive type links")
 			}
+			as, bs := a.Recursive.Types, b.Recursive.Types
+			// All unifiable type-variables should occur within the constructor and type-parameters.
+			// The underlying type should be ignored (to prevent possible reassignment of underlying types).
+			var appA, appB types.App
+			for i, t := range as {
+				appA.Const, appA.Args = t.Const, t.Args
+				appB.Const, appB.Args = bs[i].Const, bs[i].Args
+				if err := ctx.Unify(&appA, &appB); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		// unroll a
@@ -361,11 +372,12 @@ func (ctx *CommonContext) unifyRows(a, b types.Type) error {
 	}
 
 	// labels missing from ma/mb
-	xa, xb := types.NewTypeMapBuilder(), types.NewTypeMapBuilder()
+	var xa, xb types.TypeMapBuilder
 	ia, ib := ma.Iterator(), mb.Iterator()
 	for !ia.Done() {
 		la, va := ia.Next()
 		if _, ok := mb.Get(la); !ok {
+			xb.EnsureInitialized()
 			xb.Set(la, va)
 		}
 	}
@@ -373,6 +385,7 @@ func (ctx *CommonContext) unifyRows(a, b types.Type) error {
 		lb, vb := ib.Next()
 		va, ok := ma.Get(lb)
 		if !ok {
+			xa.EnsureInitialized()
 			xa.Set(lb, vb)
 			continue
 		}
@@ -381,9 +394,11 @@ func (ctx *CommonContext) unifyRows(a, b types.Type) error {
 			return err
 		}
 		if ua.Len() > 0 {
+			xb.EnsureInitialized()
 			xb.Set(lb, ua)
 		}
 		if ub.Len() > 0 {
+			xa.EnsureInitialized()
 			xa.Set(lb, ub)
 		}
 	}

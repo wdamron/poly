@@ -23,6 +23,7 @@
 package poly_test
 
 import (
+	"errors"
 	"testing"
 
 	. "github.com/wdamron/poly"
@@ -38,8 +39,11 @@ func TestLiterals(t *testing.T) {
 
 	env.Declare("x", TConst("int"))
 
-	constructVecX := func(env types.TypeEnv, level int) types.Type {
-		return TApp(TConst("vec"), env.Lookup("x"))
+	constructVecX := func(env types.TypeEnv, level int) (types.Type, error) {
+		if x := env.Lookup("x"); x == nil {
+			return nil, errors.New("x is not defined")
+		}
+		return TApp(TConst("vec"), env.Lookup("x")), nil
 	}
 
 	ty, err := ctx.Infer(Let("vec", Literal("[x]", constructVecX), Var("vec")), env)

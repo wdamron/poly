@@ -74,7 +74,24 @@ func NewTypeListBuilder() TypeListBuilder {
 	return TypeListBuilder{immutable.NewListBuilder(emptyList)}
 }
 
-func (b TypeListBuilder) Len() int          { return b.b.Len() }
+func (b *TypeListBuilder) EnsureInitialized() {
+	if b.b != nil {
+		return
+	}
+	b.b = immutable.NewListBuilder(emptyList)
+}
+
+func (b TypeListBuilder) Len() int {
+	if b.b == nil {
+		return 0
+	}
+	return b.b.Len()
+}
 func (b TypeListBuilder) Append(t Type)     { b.b.Append(t) }
 func (b TypeListBuilder) Set(i int, t Type) { b.b.Set(i, t) }
-func (b TypeListBuilder) Build() TypeList   { return TypeList{b.b.List()} }
+func (b TypeListBuilder) Build() TypeList {
+	if b.b == nil {
+		return EmptyTypeList
+	}
+	return TypeList{b.b.List()}
+}

@@ -98,8 +98,20 @@ func NewTypeMapBuilder() TypeMapBuilder {
 	return TypeMapBuilder{immutable.NewSortedMapBuilder(emptyMap)}
 }
 
+func (b *TypeMapBuilder) EnsureInitialized() {
+	if b.b != nil {
+		return
+	}
+	b.b = immutable.NewSortedMapBuilder(emptyMap)
+}
+
 // Get the number of entries in the builder.
-func (b TypeMapBuilder) Len() int { return b.b.Len() }
+func (b TypeMapBuilder) Len() int {
+	if b.b == nil {
+		return 0
+	}
+	return b.b.Len()
+}
 
 // Set the type list for the given label in the builder.
 func (b TypeMapBuilder) Set(label string, ts TypeList) TypeMapBuilder {
@@ -114,7 +126,12 @@ func (b TypeMapBuilder) Delete(label string) TypeMapBuilder {
 }
 
 // Finalize the builder into an immutable map.
-func (b TypeMapBuilder) Build() TypeMap { return TypeMap{b.b.Map()} }
+func (b TypeMapBuilder) Build() TypeMap {
+	if b.b == nil {
+		return EmptyTypeMap
+	}
+	return TypeMap{b.b.Map()}
+}
 
 // Merge entries into the builder.
 func (a TypeMapBuilder) Merge(b TypeMap) TypeMapBuilder {
