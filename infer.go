@@ -84,15 +84,15 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 
 	case *ast.LetGroup:
 		if !ti.analyzed {
-			if err := ti.analysis.analyze(ti.rootExpr); err != nil {
-				ti.invalid, ti.err, ti.analysis.invalid = ti.analysis.invalid, err, nil
+			if err := ti.analysis.Analyze(ti.rootExpr); err != nil {
+				ti.invalid, ti.err, ti.analysis.Invalid = ti.analysis.Invalid, err, nil
 				return nil, err
 			}
 			ti.analyzed = true
 		}
 		stashed := 0
 		// Grouped let-bindings are sorted into strongly-connected components, then type-checked in dependency order:
-		for _, scc := range ti.analysis.sccs[ti.analysis.groupNums[e]] {
+		for _, scc := range ti.analysis.Sccs[ti.analysis.GroupNums[e]] {
 			// Add fresh type-variables for bindings:
 			vars := ti.common.VarTracker.NewList(level+1, len(scc))
 			tv, tail := vars.Head(), vars.Tail()

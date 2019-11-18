@@ -26,6 +26,7 @@ import (
 	"errors"
 
 	"github.com/wdamron/poly/ast"
+	"github.com/wdamron/poly/internal/astutil"
 	"github.com/wdamron/poly/internal/typeutil"
 	"github.com/wdamron/poly/types"
 )
@@ -38,7 +39,7 @@ type InferenceContext struct {
 	err         error
 	invalid     ast.Expr
 	rootExpr    ast.Expr
-	analysis    analysis
+	analysis    astutil.Analysis
 	initialized bool
 	analyzed    bool
 	needsReset  bool
@@ -53,14 +54,14 @@ func NewContext() *InferenceContext {
 }
 
 func (ti *InferenceContext) init() {
-	ti.analysis.init()
+	ti.analysis.Init()
 	ti.common.Init()
 	ti.initialized = true
 }
 
 func (ti *InferenceContext) reset() {
 	if ti.analyzed {
-		ti.analysis.reset()
+		ti.analysis.Reset()
 		ti.analyzed = false
 	}
 	ti.common.Reset()

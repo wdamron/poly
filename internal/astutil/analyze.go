@@ -20,7 +20,7 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package poly
+package astutil
 
 import (
 	"errors"
@@ -37,44 +37,44 @@ import (
 //   and all others are monomorphic until the group is generalized (​H98 s4.5.2).
 //
 //   The initial dependency analysis should ignore references to variables that have an explicit type signature.
-type analysis struct {
-	groupNums   map[*ast.LetGroup]int
-	scopes      map[string]int // map from variable to let-group number (or -1 for function-bound variables)
-	scopeStash  []stashedScope // shadowed variable-scope mappings
-	graphs      []graph        // indexed by let-group number
-	currentVert []int          // indexed by let-group number
-	sccs        [][][]int      // indexed by let-group number
-	err         error
-	invalid     ast.Expr
+type Analysis struct {
+	GroupNums   map[*ast.LetGroup]int
+	Scopes      map[string]int // map from variable to let-group number (or -1 for function-bound variables)
+	ScopeStash  []StashedScope // shadowed variable-scope mappings
+	Graphs      []graph        // indexed by let-group number
+	CurrentVert []int          // indexed by let-group number
+	Sccs        [][][]int      // indexed by let-group number
+	Err         error
+	Invalid     ast.Expr
 
 	// initial space:
-	_scopeStash  [16]stashedScope
+	_scopeStash  [16]StashedScope
 	_graphs      [16]graph
 	_currentVert [16]int
 	_sccs        [16][][]int
 }
 
-type stashedScope struct {
+type StashedScope struct {
 	Name     string
 	GroupNum int
 }
 
-func (a *analysis) init() {
-	a.scopes = make(map[string]int, 32)
-	a.groupNums = make(map[*ast.LetGroup]int, 16)
-	a.scopeStash, a.graphs, a.currentVert, a.sccs =
+func (a *Analysis) Init() {
+	a.Scopes = make(map[string]int, 32)
+	a.GroupNums = make(map[*ast.LetGroup]int, 16)
+	a.ScopeStash, a.Graphs, a.CurrentVert, a.Sccs =
 		a._scopeStash[:0], a._graphs[:0], a._currentVert[:0], a._sccs[:0]
 }
 
-func (a *analysis) reset() {
-	for g := range a.groupNums {
-		delete(a.groupNums, g)
+func (a *Analysis) Reset() {
+	for g := range a.GroupNums {
+		delete(a.GroupNums, g)
 	}
-	for v := range a.scopes {
-		delete(a.scopes, v)
+	for v := range a.Scopes {
+		delete(a.Scopes, v)
 	}
 	for i := range a._scopeStash {
-		a._scopeStash[i] = stashedScope{}
+		a._scopeStash[i] = StashedScope{}
 	}
 	for i := range a._graphs {
 		a._graphs[i] = graph{}
@@ -85,41 +85,20 @@ func (a *analysis) reset() {
 	for i := range a._sccs {
 		a._sccs[i] = nil
 	}
-	a.scopeStash, a.graphs, a.currentVert, a.sccs, a.err, a.invalid =
+	a.ScopeStash, a.Graphs, a.CurrentVert, a.Sccs, a.Err, a.Invalid =
 		a._scopeStash[:0], a._graphs[:0], a._currentVert[:0], a._sccs[:0], nil, nil
 }
 
-// returns 1 if the variable was stashed, otherwise 0
-func (a *analysis) stash(name string) int {
-	if groupNum, exists := a.scopes[name]; exists {
-		a.scopeStash = append(a.scopeStash, stashedScope{name, groupNum})
-		return 1
-	}
-	return 0
-}
-
-func (a *analysis) unstash(count int) {
-	if count <= 0 {
-		return
-	}
-	stash := a.scopeStash
-	unstashed := 0
-	for i := len(stash) - 1; unstashed < count && i >= 0; i, unstashed = i-1, unstashed+1 {
-		a.scopes[stash[i].Name] = stash[i].GroupNum
-	}
-	a.scopeStash = a.scopeStash[0 : len(stash)-unstashed]
-}
-
-func (a *analysis) analyze(root ast.Expr) error {
+func (a *Analysis) Analyze(root ast.Expr) error {
 	if err := a.analyzeExpr(root); err != nil {
-		a.err = err
+		a.Err = err
 		return err
 	}
-	a.sccs = make([][][]int, len(a.graphs))
-	for groupNum := range a.graphs {
-		a.sccs[groupNum] = tarjanSCC(&a.graphs[groupNum])
+	a.Sccs = make([][][]int, len(a.Graphs))
+	for groupNum := range a.Graphs {
+		a.Sccs[groupNum] = tarjanSCC(&a.Graphs[groupNum])
 		// Reverse the order for a topological sort:
-		sccs := a.sccs[groupNum]
+		sccs := a.Sccs[groupNum]
 		for i, j := 0, len(sccs)-1; i < j; i, j = i+1, j-1 {
 			sccs[i], sccs[j] = sccs[j], sccs[i]
 		}
@@ -127,13 +106,34 @@ func (a *analysis) analyze(root ast.Expr) error {
 	return nil
 }
 
-func (a *analysis) analyzeExpr(expr ast.Expr) error {
+// returns 1 if the variable was stashed, otherwise 0
+func (a *Analysis) stash(name string) int {
+	if groupNum, exists := a.Scopes[name]; exists {
+		a.ScopeStash = append(a.ScopeStash, StashedScope{name, groupNum})
+		return 1
+	}
+	return 0
+}
+
+func (a *Analysis) unstash(count int) {
+	if count <= 0 {
+		return
+	}
+	stash := a.ScopeStash
+	unstashed := 0
+	for i := len(stash) - 1; unstashed < count && i >= 0; i, unstashed = i-1, unstashed+1 {
+		a.Scopes[stash[i].Name] = stash[i].GroupNum
+	}
+	a.ScopeStash = a.ScopeStash[0 : len(stash)-unstashed]
+}
+
+func (a *Analysis) analyzeExpr(expr ast.Expr) error {
 	switch expr := expr.(type) {
 	case *ast.Var:
-		if groupNum, ok := a.scopes[expr.Name]; ok && groupNum >= 0 {
-			graph := &a.graphs[groupNum]
-			if a.currentVert[groupNum] >= 0 {
-				graph.addEdge(graph.verts[expr.Name], a.currentVert[groupNum])
+		if groupNum, ok := a.Scopes[expr.Name]; ok && groupNum >= 0 {
+			graph := &a.Graphs[groupNum]
+			if a.CurrentVert[groupNum] >= 0 {
+				graph.addEdge(graph.verts[expr.Name], a.CurrentVert[groupNum])
 			}
 		}
 
@@ -151,13 +151,13 @@ func (a *analysis) analyzeExpr(expr ast.Expr) error {
 		stashed := 0
 		for _, name := range expr.ArgNames {
 			stashed += a.stash(name)
-			a.scopes[name] = -1
+			a.Scopes[name] = -1
 		}
 		if err := a.analyzeExpr(expr.Body); err != nil {
 			return err
 		}
 		for _, name := range expr.ArgNames {
-			delete(a.scopes, name)
+			delete(a.Scopes, name)
 		}
 		a.unstash(stashed)
 
@@ -167,45 +167,45 @@ func (a *analysis) analyzeExpr(expr ast.Expr) error {
 		// Allow self-references within function types:
 		if isFunc {
 			stashed = a.stash(expr.Var)
-			a.scopes[expr.Var] = -1
+			a.Scopes[expr.Var] = -1
 		}
 		if err := a.analyzeExpr(expr.Value); err != nil {
 			return err
 		}
 		if !isFunc {
 			stashed = a.stash(expr.Var)
-			a.scopes[expr.Var] = -1
+			a.Scopes[expr.Var] = -1
 		}
 		if err := a.analyzeExpr(expr.Body); err != nil {
 			return err
 		}
-		delete(a.scopes, expr.Var)
+		delete(a.Scopes, expr.Var)
 		a.unstash(stashed)
 
 	case *ast.LetGroup:
-		if _, exists := a.groupNums[expr]; exists {
-			a.invalid = expr
+		if _, exists := a.GroupNums[expr]; exists {
+			a.Invalid = expr
 			return errors.New("Nested let-groups must not share the same address")
 		}
-		num := len(a.groupNums)
-		a.groupNums[expr] = num
-		a.graphs = append(a.graphs, graph{
+		num := len(a.GroupNums)
+		a.GroupNums[expr] = num
+		a.Graphs = append(a.Graphs, graph{
 			verts: make(map[string]int, len(expr.Vars)),
 			edges: make([][]int, len(expr.Vars)),
 		})
-		a.currentVert = append(a.currentVert, -1)
-		graph := &a.graphs[num]
+		a.CurrentVert = append(a.CurrentVert, -1)
+		graph := &a.Graphs[num]
 		stashed := 0
 		for _, v := range expr.Vars {
 			if !graph.addVert(v.Var) {
-				a.invalid = expr
+				a.Invalid = expr
 				return errors.New("Found duplicate bindings for " + v.Var + " within let-group")
 			}
 			stashed += a.stash(v.Var)
-			a.scopes[v.Var] = num
+			a.Scopes[v.Var] = num
 		}
 		for i, v := range expr.Vars {
-			a.currentVert[num] = i
+			a.CurrentVert[num] = i
 			// Allow self-references within function types:
 			if _, isFunc := v.Value.(*ast.Func); isFunc {
 				if err := a.analyzeExpr(v.Value); err != nil {
@@ -216,27 +216,27 @@ func (a *analysis) analyzeExpr(expr ast.Expr) error {
 			// Disallow self-references within non-function types:
 			exists := false
 			for i := 0; i < stashed; i++ {
-				existing := a.scopeStash[len(a.scopeStash)-(1+i)]
+				existing := a.ScopeStash[len(a.ScopeStash)-(1+i)]
 				if existing.Name == v.Var {
-					a.scopes[v.Var] = existing.GroupNum
+					a.Scopes[v.Var] = existing.GroupNum
 					exists = true
 					break
 				}
 			}
 			if !exists {
-				delete(a.scopes, v.Var)
+				delete(a.Scopes, v.Var)
 			}
 			if err := a.analyzeExpr(v.Value); err != nil {
 				return err
 			}
-			a.scopes[v.Var] = num
+			a.Scopes[v.Var] = num
 		}
-		a.currentVert[num] = -1
+		a.CurrentVert[num] = -1
 		if err := a.analyzeExpr(expr.Body); err != nil {
 			return err
 		}
 		for _, v := range expr.Vars {
-			delete(a.scopes, v.Var)
+			delete(a.Scopes, v.Var)
 		}
 		a.unstash(stashed)
 
@@ -274,21 +274,21 @@ func (a *analysis) analyzeExpr(expr ast.Expr) error {
 		}
 		for _, c := range expr.Cases {
 			stashed := a.stash(c.Var)
-			a.scopes[c.Var] = -1
+			a.Scopes[c.Var] = -1
 			if err := a.analyzeExpr(c.Value); err != nil {
 				return err
 			}
-			delete(a.scopes, c.Var)
+			delete(a.Scopes, c.Var)
 			a.unstash(stashed)
 		}
 		if expr.Default != nil {
 			c := expr.Default
 			stashed := a.stash(c.Var)
-			a.scopes[c.Var] = -1
+			a.Scopes[c.Var] = -1
 			if err := a.analyzeExpr(c.Value); err != nil {
 				return err
 			}
-			delete(a.scopes, c.Var)
+			delete(a.Scopes, c.Var)
 			a.unstash(stashed)
 		}
 	}
