@@ -45,9 +45,9 @@ type TypeClass struct {
 
 	tconst    map[string]*Instance   // mapped by name
 	tappconst map[string][]*Instance // grouped by constructor name
-	trecord   map[string][]*Instance // grouped by first label
-	tvariant  map[string][]*Instance // grouped by first label
-	tmisc     []*Instance            // instances not in the above groups
+	trecord   []*Instance
+	tvariant  []*Instance
+	tmisc     []*Instance // instances not in the above groups
 }
 
 // Instance of a parameterized type-class
@@ -108,27 +108,9 @@ func (tc *TypeClass) AddInstance(param Type, methods MethodSet, methodNames map[
 		}
 		tc.tmisc = append(tc.tmisc, inst)
 	case *Record:
-		if row, ok := param.Row.(*RowExtend); ok {
-			if first, _ := row.Labels.First(); first != "" {
-				if tc.trecord == nil {
-					tc.trecord = make(map[string][]*Instance)
-				}
-				tc.trecord[first] = append(tc.trecord[first], inst)
-				break
-			}
-		}
-		tc.tmisc = append(tc.tmisc, inst)
+		tc.trecord = append(tc.trecord, inst)
 	case *Variant:
-		if row, ok := param.Row.(*RowExtend); ok {
-			if first, _ := row.Labels.First(); first != "" {
-				if tc.tvariant == nil {
-					tc.tvariant = make(map[string][]*Instance)
-				}
-				tc.tvariant[first] = append(tc.tvariant[first], inst)
-				break
-			}
-		}
-		tc.tmisc = append(tc.tmisc, inst)
+		tc.tvariant = append(tc.tvariant, inst)
 	default:
 		tc.tmisc = append(tc.tmisc, inst)
 	}
@@ -180,21 +162,9 @@ func (tc *TypeClass) MatchInstance(param Type, found func(*Instance) bool) (matc
 			matched, _ = tc.matchInstance(seen, found)
 		}
 	case *Record:
-		if row, ok := param.Row.(*RowExtend); ok {
-			if firstLabel, _ := row.Labels.First(); firstLabel != "" {
-				matched, _ = tc.matchRecordInstance(firstLabel, seen, found)
-				break
-			}
-		}
-		matched, _ = tc.matchInstance(seen, found)
+		matched, _ = tc.matchRecordInstance(seen, found)
 	case *Variant:
-		if row, ok := param.Row.(*RowExtend); ok {
-			if firstLabel, _ := row.Labels.First(); firstLabel != "" {
-				matched, _ = tc.matchVariantInstance(firstLabel, seen, found)
-				break
-			}
-		}
-		matched, _ = tc.matchInstance(seen, found)
+		matched, _ = tc.matchVariantInstance(seen, found)
 	default:
 		matched, _ = tc.matchInstance(seen, found)
 	}
@@ -313,41 +283,37 @@ func (tc *TypeClass) matchAppConstInstance(name string, seen util.IntDedupeMap, 
 	return false, true
 }
 
-func (tc *TypeClass) matchRecordInstance(firstLabel string, seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+func (tc *TypeClass) matchRecordInstance(seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
 	if seen[tc.Id] {
 		return false, true
 	}
 	seen[tc.Id] = true
 	for _, sub := range tc.Sub {
-		if ok, shouldContinue = sub.matchRecordInstance(firstLabel, seen, found); !shouldContinue {
+		if ok, shouldContinue = sub.matchRecordInstance(seen, found); !shouldContinue {
 			return ok, false
 		}
 	}
-	if tc.trecord != nil {
-		for _, inst := range tc.trecord[firstLabel] {
-			if found(inst) {
-				return true, false
-			}
+	for _, inst := range tc.trecord {
+		if found(inst) {
+			return true, false
 		}
 	}
 	return false, true
 }
 
-func (tc *TypeClass) matchVariantInstance(firstLabel string, seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+func (tc *TypeClass) matchVariantInstance(seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
 	if seen[tc.Id] {
 		return false, true
 	}
 	seen[tc.Id] = true
 	for _, sub := range tc.Sub {
-		if ok, shouldContinue = sub.matchVariantInstance(firstLabel, seen, found); !shouldContinue {
+		if ok, shouldContinue = sub.matchVariantInstance(seen, found); !shouldContinue {
 			return ok, false
 		}
 	}
-	if tc.tvariant != nil {
-		for _, inst := range tc.tvariant[firstLabel] {
-			if found(inst) {
-				return true, false
-			}
+	for _, inst := range tc.tvariant {
+		if found(inst) {
+			return true, false
 		}
 	}
 	return false, true

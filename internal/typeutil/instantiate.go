@@ -52,6 +52,9 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 		if t.IsWeakVar() {
 			tv.SetWeak()
 		}
+		if t.IsSizeVar() {
+			tv.RestrictSizeVar()
+		}
 
 		constraints := t.Constraints()
 		constraints2 := make([]types.InstanceConstraint, len(constraints))
@@ -114,6 +117,15 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 		m := t.Labels
 		mb := m.Builder()
 		m.Range(func(label string, ts types.TypeList) bool {
+			// common case for unscoped labels:
+			if ts.Len() == 1 {
+				t := ts.Get(0)
+				if t.IsGeneric() {
+					mb.Set(label, types.SingletonTypeList(ctx.visitInstantiate(level, t)))
+				}
+				return true
+			}
+			// only build a new type list (and update the map) if the existing list contains generic types:
 			generic := false
 			ts.Range(func(i int, t types.Type) bool {
 				generic = t.IsGeneric()

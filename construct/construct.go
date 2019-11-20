@@ -39,6 +39,11 @@ func TConst(name string) *types.Const {
 	return &types.Const{Name: name}
 }
 
+// Size constant: `array[int, 8]`
+func TSize(size int) types.Size {
+	return types.Size(size)
+}
+
 // Type application: `list[int]`
 func TApp(constructor types.Type, args ...types.Type) *types.App {
 	return &types.App{Const: constructor, Args: args}
@@ -89,6 +94,9 @@ func TVariant(row types.Type) *types.Variant {
 
 // Row extension: `<a : _ , b : _ | ...>`
 func TRowExtend(row types.Type, labels types.TypeMap) *types.RowExtend {
+	if row == nil {
+		row = types.RowEmptyPointer
+	}
 	return &types.RowExtend{Row: row, Labels: labels}
 }
 
@@ -107,7 +115,7 @@ func TRowEmpty() *types.RowEmpty {
 
 // Expressions:
 
-func Literal(syntax string, constructType func(env types.TypeEnv, level int) (types.Type, error)) *ast.Literal {
+func Literal(syntax string, usingVars []string, constructType func(env types.TypeEnv, level int, using []types.Type) (types.Type, error)) *ast.Literal {
 	return &ast.Literal{Syntax: syntax, Construct: constructType}
 }
 
@@ -168,6 +176,9 @@ func RecordRestrict(record ast.Expr, label string) *ast.RecordRestrict {
 
 // Extending record: `{a = 1, b = 2 | r}`
 func RecordExtend(record ast.Expr, labels ...ast.LabelValue) *ast.RecordExtend {
+	if record == nil {
+		record = RecordEmpty()
+	}
 	return &ast.RecordExtend{Record: record, Labels: labels}
 }
 

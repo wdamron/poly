@@ -76,6 +76,13 @@ func (e *TypeEnv) NewVar(level int) *types.Var { return types.NewVar(e.freshId()
 // Create a generic type-variable with a unique id.
 func (e *TypeEnv) NewGenericVar() *types.Var { return types.NewGenericVar(e.freshId()) }
 
+// Create a generic size type-variable with a unique id. Size type-variables must link to size types.
+func (e *TypeEnv) NewGenericSize() *types.Var {
+	tv := e.NewGenericVar()
+	tv.RestrictSizeVar()
+	return tv
+}
+
 // Create a qualified type-variable with a unique id.
 func (e *TypeEnv) NewQualifiedVar(constraints ...types.InstanceConstraint) *types.Var {
 	tv := types.NewGenericVar(e.freshId())
@@ -203,6 +210,13 @@ func (e *TypeEnv) Lookup(name string) types.Type {
 	return e.Parent.Lookup(name)
 }
 
+// Instantiate a type at a given let-binding level. Instantiation should only occur indirectly during inference.
+//
+// Literal expressions may need to instantiate types at the level they are being instantiated at.
+func (e *TypeEnv) Instantiate(level int, t types.Type) types.Type {
+	return e.common.Instantiate(level, t)
+}
+
 // Declare a parameterized type-class within the type environment.
 //
 // If the type-parameter is not linked within the bind function, an instance constraint will be added to the parameter.
@@ -298,7 +312,7 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 	case *types.Const, *types.App, *types.Record, *types.Variant:
 		// ok
 	default:
-		return nil, errors.New("Type-class instance must be a type constant, type application, variant type, or record type")
+		return nil, errors.New("Type-class instance must be a type constant, type application, record type, or variant type")
 	}
 	// prevent overlapping instances:
 	var conflict *types.Instance

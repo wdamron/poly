@@ -38,7 +38,6 @@ import (
 //
 //   The initial dependency analysis should ignore references to variables that have an explicit type signature.
 type Analysis struct {
-	GroupNums   map[*ast.LetGroup]int
 	Scopes      map[string]int // map from variable to let-group number (or -1 for function-bound variables)
 	ScopeStash  []StashedScope // shadowed variable-scope mappings
 	Graphs      []graph        // indexed by let-group number
@@ -61,15 +60,11 @@ type StashedScope struct {
 
 func (a *Analysis) Init() {
 	a.Scopes = make(map[string]int, 32)
-	a.GroupNums = make(map[*ast.LetGroup]int, 16)
 	a.ScopeStash, a.Graphs, a.CurrentVert, a.Sccs =
 		a._scopeStash[:0], a._graphs[:0], a._currentVert[:0], a._sccs[:0]
 }
 
 func (a *Analysis) Reset() {
-	for g := range a.GroupNums {
-		delete(a.GroupNums, g)
-	}
 	for v := range a.Scopes {
 		delete(a.Scopes, v)
 	}
@@ -86,7 +81,7 @@ func (a *Analysis) Reset() {
 		a._sccs[i] = nil
 	}
 	a.ScopeStash, a.Graphs, a.CurrentVert, a.Sccs, a.Err, a.Invalid =
-		a._scopeStash[:0], a._graphs[:0], a._currentVert[:0], a._sccs[:0], nil, nil
+		a._scopeStash[:0], a._graphs[:0], a._currentVert[:0], nil, nil, nil
 }
 
 func (a *Analysis) Analyze(root ast.Expr) error {
@@ -94,7 +89,12 @@ func (a *Analysis) Analyze(root ast.Expr) error {
 		a.Err = err
 		return err
 	}
-	a.Sccs = make([][][]int, len(a.Graphs))
+	ng := len(a.Graphs)
+	if ng > len(a._sccs) {
+		a.Sccs = make([][][]int, ng)
+	} else {
+		a.Sccs = a._sccs[:ng]
+	}
 	for groupNum := range a.Graphs {
 		a.Sccs[groupNum] = tarjanSCC(&a.Graphs[groupNum])
 		// Reverse the order for a topological sort:
@@ -129,6 +129,16 @@ func (a *Analysis) unstash(count int) {
 
 func (a *Analysis) analyzeExpr(expr ast.Expr) error {
 	switch expr := expr.(type) {
+	case *ast.Literal:
+		for _, name := range expr.Using {
+			if groupNum, ok := a.Scopes[name]; ok && groupNum >= 0 {
+				graph := &a.Graphs[groupNum]
+				if a.CurrentVert[groupNum] >= 0 {
+					graph.addEdge(graph.verts[name], a.CurrentVert[groupNum])
+				}
+			}
+		}
+
 	case *ast.Var:
 		if groupNum, ok := a.Scopes[expr.Name]; ok && groupNum >= 0 {
 			graph := &a.Graphs[groupNum]
@@ -183,12 +193,7 @@ func (a *Analysis) analyzeExpr(expr ast.Expr) error {
 		a.unstash(stashed)
 
 	case *ast.LetGroup:
-		if _, exists := a.GroupNums[expr]; exists {
-			a.Invalid = expr
-			return errors.New("Nested let-groups must not share the same address")
-		}
-		num := len(a.GroupNums)
-		a.GroupNums[expr] = num
+		num := len(a.Graphs)
 		a.Graphs = append(a.Graphs, graph{
 			verts: make(map[string]int, len(expr.Vars)),
 			edges: make([][]int, len(expr.Vars)),

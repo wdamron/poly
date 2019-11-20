@@ -23,7 +23,6 @@
 package poly_test
 
 import (
-	"errors"
 	"testing"
 
 	. "github.com/wdamron/poly"
@@ -39,20 +38,64 @@ func TestLiterals(t *testing.T) {
 
 	env.Declare("x", TConst("int"))
 
-	constructVecX := func(env types.TypeEnv, level int) (types.Type, error) {
-		if x := env.Lookup("x"); x == nil {
-			return nil, errors.New("x is not defined")
-		}
-		return TApp(TConst("vec"), env.Lookup("x")), nil
+	xvec := &ast.Literal{
+		Syntax: "[x]", Using: []string{"x"},
+		Construct: func(env types.TypeEnv, level int, using []types.Type) (types.Type, error) {
+			return TApp(TConst("vec"), using[0]), nil // x :: int |- vec[int]
+		},
 	}
 
-	ty, err := ctx.Infer(Let("vec", Literal("[x]", constructVecX), Var("vec")), env)
+	ty, err := ctx.Infer(Let("vec", xvec, Var("vec")), env)
 	if err != nil {
 		t.Fatal(err)
 	}
-	typeString := types.TypeString(ty)
-	if typeString != "vec[int]" {
-		t.Fatalf("type: %s", typeString)
+	if types.TypeString(ty) != "vec[int]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+}
+
+func TestSizes(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	intarray := TApp(TConst("array"), TConst("int"), env.NewGenericSize())
+
+	env.Declare("xs", TApp(TConst("array"), TConst("int"), TSize(8)))
+	env.Declare("ys", TApp(TConst("array"), TConst("int"), TSize(16)))
+	env.Declare("zs", TApp(TConst("array"), TConst("int"), TConst("foo")))
+
+	env.Declare("add", TArrow2(intarray, intarray, intarray))
+
+	ty, err := ctx.Infer(Var("add"), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "size 'a => (array[int, 'a], array[int, 'a]) -> array[int, 'a]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	ty, err = ctx.Infer(Call(Var("add"), Var("xs"), Var("xs")), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "array[int, 8]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	ty, err = ctx.Infer(Call(Var("add"), Var("ys"), Var("ys")), env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "array[int, 16]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	if _, err = ctx.Infer(Call(Var("add"), Var("xs"), Var("ys")), env); err == nil {
+		t.Fatalf("Expected size-mismatch error")
+	}
+
+	if _, err = ctx.Infer(Call(Var("add"), Var("zs"), Var("zs")), env); err == nil {
+		t.Fatalf("Expected size type-restriction error")
 	}
 }
 
@@ -367,14 +410,14 @@ func TestRecursiveLet(t *testing.T) {
 	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
 	A := env.NewGenericVar()
 	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
-	env.Declare("newbool", TArrow(nil, TConst("bool")))
+	env.Declare("somebool", TConst("bool"))
 
 	expr := Func1("x",
 		Let("f",
 			Func1("x",
 				Call(
 					Var("if"),
-					Call(Var("newbool")),
+					Var("somebool"),
 					Var("x"),
 					Call(Var("f"), Call(Var("add"), Var("x"), Var("x"))),
 				),
@@ -382,7 +425,7 @@ func TestRecursiveLet(t *testing.T) {
 			Call(Var("f"), Var("x")),
 		))
 
-	if ast.ExprString(expr) != "fn (x) -> let f(x) = if(newbool(), x, f(add(x, x))) in f(x)" {
+	if ast.ExprString(expr) != "fn (x) -> let f(x) = if(somebool, x, f(add(x, x))) in f(x)" {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
 	ty, err := ctx.Infer(expr, env)
@@ -449,8 +492,51 @@ func TestVariantMatch(t *testing.T) {
 	ctx := NewContext()
 
 	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
+	a := env.NewGenericVar()
+	env.Declare("if", TArrow3(TConst("bool"), a, a, a))
+	env.Declare("somebool", TConst("bool"))
 	env.Declare("someint", TConst("int"))
 	env.Declare("somebool", TConst("bool"))
+
+	ifExpr := Call(Var("if"), Var("somebool"), Variant("i", Var("someint")), Variant("b", Var("somebool")))
+
+	ty, err := ctx.Infer(ifExpr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "[b : bool, i : int | 'a]" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	matchExpr := Match(ifExpr, // [i : int, b : bool | 'a]
+		[]ast.MatchCase{
+			{Label: "i", Var: "i", Value: Call(Var("add"), Var("i"), Var("i"))},
+			{Label: "b", Var: "b", Value: Call(Var("if"), Var("b"), Var("someint"), Var("someint"))},
+		},
+		// default case:
+		nil)
+
+	ty, err = ctx.Infer(matchExpr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "int" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	matchExpr = Match(ifExpr, // [i : int, b : bool | 'a]
+		[]ast.MatchCase{
+			{Label: "i", Var: "i", Value: Call(Var("add"), Var("i"), Var("i"))},
+			// does not match variant type for the match argument (bool != int):
+			{Label: "b", Var: "b", Value: Call(Var("add"), Var("b"), Var("b"))},
+		},
+		// default case:
+		nil)
+
+	ty, err = ctx.Infer(matchExpr, env)
+	if err == nil {
+		t.Fatalf("expected error due to invalid variant argument for match")
+	}
 
 	expr := Let("f", Func1("x", Match(Var("x"),
 		[]ast.MatchCase{
@@ -466,7 +552,7 @@ func TestVariantMatch(t *testing.T) {
 	if ast.ExprString(expr) != "let f(x) = match x { :a i -> f(:b i) | :b i -> f(:c i) | :c i -> add(i, someint) | _ -> someint } in f" {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
-	ty, err := ctx.Infer(expr, env)
+	ty, err = ctx.Infer(expr, env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -509,6 +595,76 @@ func TestVariantMatch(t *testing.T) {
 	}
 	if types.TypeString(ty) != "int" {
 		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+}
+
+func TestSafeStacks(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	// Use scoped labels within records to model a type-safe (polymorphic) stack
+	// with static underflow checking:
+
+	rest, a := env.NewGenericVar(), env.NewGenericVar()
+	env.Declare("push", TArrow2( // ({'rest}, 'a) -> {top : 'a | 'rest}
+		TRecord(rest), a,
+		TRecord(TRowExtend(rest, TypeMap(map[string]types.Type{"top": a})))))
+
+	rest, a = env.NewGenericVar(), env.NewGenericVar()
+	env.Declare("peek", TArrow1( // {top : 'a | 'rest} -> 'a
+		TRecord(TRowExtend(rest, TypeMap(map[string]types.Type{"top": a}))),
+		a))
+
+	rest, a = env.NewGenericVar(), env.NewGenericVar()
+	env.Declare("pop", TArrow1( // {top : 'a | 'rest} -> 'rest
+		TRecord(TRowExtend(rest, TypeMap(map[string]types.Type{"top": a}))),
+		TRecord(rest)))
+
+	env.Declare("i", TConst("int"))
+	env.Declare("b", TConst("bool"))
+
+	expr := Let("stack", RecordEmpty(),
+		Let("stack", Call(Var("push"), Var("stack"), Var("i")), // i
+			Let("stack", Call(Var("push"), Var("stack"), Var("b")), // i b
+				Let("top", Call(Var("peek"), Var("stack")), // i b
+					Let("stack", Call(Var("pop"), Var("stack")), // i
+						Var("top"))))))
+
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "bool" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	expr = Let("stack", RecordEmpty(),
+		Let("stack", Call(Var("push"), Var("stack"), Var("i")), // i
+			Let("stack", Call(Var("push"), Var("stack"), Var("b")), // i b
+				Let("stack", Call(Var("pop"), Var("stack")), // i
+					Let("top", Call(Var("peek"), Var("stack")), // i
+						Let("stack", Call(Var("pop"), Var("stack")), // empty
+							Var("top")))))))
+
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "int" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	expr = Let("stack", RecordEmpty(),
+		Let("stack", Call(Var("push"), Var("stack"), Var("i")), // i
+			Let("stack", Call(Var("push"), Var("stack"), Var("b")), // i b
+				Let("stack", Call(Var("pop"), Var("stack")), // i
+					Let("stack", Call(Var("pop"), Var("stack")), // empty
+						Let("stack", Call(Var("pop"), Var("stack")), // underflow
+							Var("stack")))))))
+
+	ty, err = ctx.Infer(expr, env)
+	if err == nil {
+		t.Fatalf("expected stack underflow error")
 	}
 }
 

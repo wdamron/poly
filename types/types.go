@@ -29,6 +29,7 @@ import (
 var (
 	_ Type = (*Var)(nil)
 	_ Type = (*Const)(nil)
+	_ Type = Size(0)
 	_ Type = (*App)(nil)
 	_ Type = (*Arrow)(nil)
 	_ Type = (*Method)(nil)
@@ -86,6 +87,9 @@ func NewRef(deref Type) *App { return &App{Const: RefType, Args: []Type{deref}} 
 type Const struct {
 	Name string
 }
+
+// Size constant: `array[int, 8]`
+type Size int
 
 // Type application: `list[int]`
 type App struct {
@@ -148,11 +152,21 @@ var RowEmptyPointer = (*RowEmpty)(nil)
 // Empty row: `<>`
 type RowEmpty struct{}
 
+func TypeName(t Type) string {
+	if t == nil {
+		return ""
+	}
+	return t.TypeName()
+}
+
 // "Var"
 func (t *Var) TypeName() string { return "Var" }
 
 // Name of the type-constant
 func (t *Const) TypeName() string { return t.Name }
+
+// "Size"
+func (t Size) TypeName() string { return "Size" }
 
 // "App"
 func (t *App) TypeName() string { return "App" }
@@ -198,6 +212,12 @@ func (t *Const) IsGeneric() bool { return false }
 
 // Const never contains mutable reference-types.
 func (t *Const) HasRefs() bool { return false }
+
+// Size is never generic.
+func (t Size) IsGeneric() bool { return false }
+
+// Size never contains mutable reference-types.
+func (t Size) HasRefs() bool { return false }
 
 // Check if t contains generic types.
 func (t *App) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
@@ -248,10 +268,7 @@ func (t *RowEmpty) HasRefs() bool { return false }
 func RealType(t Type) Type {
 	for {
 		tv, ok := t.(*Var)
-		if !ok {
-			return t
-		}
-		if !tv.IsLinkVar() {
+		if !ok || !tv.IsLinkVar() {
 			return t
 		}
 		t = tv.Link()
@@ -263,7 +280,7 @@ func RealType(t Type) Type {
 func FlattenRowType(t Type) (labels TypeMap, rest Type, err error) {
 	t = RealType(t)
 	switch t := t.(type) {
-	case *RowEmpty:
+	case nil, *RowEmpty:
 		return EmptyTypeMap, t, nil
 	case *RowExtend:
 		if rest, ok := t.Row.(*RowEmpty); ok {

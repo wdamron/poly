@@ -35,15 +35,16 @@ import (
 //
 // An inference context cannot be used concurrently.
 type InferenceContext struct {
-	common      typeutil.CommonContext
-	err         error
-	invalid     ast.Expr
-	rootExpr    ast.Expr
-	analysis    astutil.Analysis
-	initialized bool
-	analyzed    bool
-	needsReset  bool
-	annotate    bool
+	common        typeutil.CommonContext
+	err           error
+	invalid       ast.Expr
+	rootExpr      ast.Expr
+	analysis      astutil.Analysis
+	letGroupCount int
+	initialized   bool
+	analyzed      bool
+	needsReset    bool
+	annotate      bool
 }
 
 // Create a new type-inference context. A context may be re-used across calls of ExprType.
@@ -65,8 +66,8 @@ func (ti *InferenceContext) reset() {
 		ti.analyzed = false
 	}
 	ti.common.Reset()
-	ti.rootExpr, ti.err, ti.invalid, ti.needsReset =
-		nil, nil, nil, false
+	ti.rootExpr, ti.err, ti.invalid, ti.letGroupCount, ti.needsReset =
+		nil, nil, nil, 0, false
 }
 
 // Reset the state of the context. The context will be reset automatically between calls of ExprType.

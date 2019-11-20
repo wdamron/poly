@@ -49,13 +49,15 @@ var (
 	_ Expr = (*Match)(nil)
 )
 
-// Literal value
+// Semi-opaque literal value
 type Literal struct {
 	// Syntax is a string representation of the literal value. The syntax will be printed when the literal is printed.
 	Syntax string
+	// Using may contain identifiers which will be looked up in the type-environment when the type is constructed.
+	Using []string
 	// Construct should produce a type at the given binding-level. The constructed type may include
 	// types derived from variables which are already in scope (retrieved from the type-environment).
-	Construct func(env types.TypeEnv, level int) (types.Type, error)
+	Construct func(env types.TypeEnv, level int, using []types.Type) (types.Type, error)
 	inferred  types.Type
 }
 

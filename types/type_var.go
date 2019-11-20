@@ -29,6 +29,11 @@ const (
 	LinkVarLevel    = 1 << 30
 	// Type-variables within mutable reference-types are weakly-polymorphic and may not be generalized
 	WeakVarLevel = 1 << 29
+
+	// Restricted levels (0x01...0x1f) << 24:
+	SizeVarLevel = 1 << 24
+
+	RestrictedLevelMask = 0x1f << 24
 )
 
 var _ Type = (*Var)(nil)
@@ -68,19 +73,21 @@ func (tv *Var) levelNum() uint32 { return tv.level &^ (0xff << 24) }
 // Link returns the type which the type-variable is bound to, if the type-variable is bound.
 func (tv *Var) Link() Type { return tv.link }
 
-func (tv *Var) IsUnboundVar() bool { return tv.level&(GenericVarLevel|LinkVarLevel) == 0 }
-func (tv *Var) IsLinkVar() bool    { return tv.level&LinkVarLevel != 0 }
-func (tv *Var) IsGenericVar() bool { return tv.level&GenericVarLevel != 0 }
-func (tv *Var) IsWeakVar() bool    { return tv.level&WeakVarLevel != 0 }
+func (tv *Var) IsUnboundVar() bool    { return tv.level&(GenericVarLevel|LinkVarLevel) == 0 }
+func (tv *Var) IsLinkVar() bool       { return tv.level&LinkVarLevel != 0 }
+func (tv *Var) IsGenericVar() bool    { return tv.level&GenericVarLevel != 0 }
+func (tv *Var) IsWeakVar() bool       { return tv.level&WeakVarLevel != 0 }
+func (tv *Var) IsSizeVar() bool       { return tv.level&RestrictedLevelMask == SizeVarLevel }
+func (tv *Var) IsRestrictedVar() bool { return tv.level&RestrictedLevelMask != 0 }
 
 // Set the binding-level of the type-variable to the generic level.
 func (tv *Var) SetGeneric() {
-	tv.level = tv.levelNum() | (tv.level & WeakVarLevel) | GenericVarLevel
+	tv.level = tv.levelNum() | (tv.level & (RestrictedLevelMask | WeakVarLevel)) | GenericVarLevel
 }
 
 // Set the binding-level of the type-variable to the weak level. Weak type-variables may not be generalized.
 func (tv *Var) SetWeak() {
-	tv.level = tv.levelNum() | (tv.level & GenericVarLevel) | WeakVarLevel
+	tv.level = tv.levelNum() | (tv.level & (RestrictedLevelMask | GenericVarLevel)) | WeakVarLevel
 }
 
 // Set the unique identifier of the type-variable.
@@ -94,7 +101,12 @@ func (tv *Var) SetLevelNum(level int) {
 // Set the type which the type-variable is bound to.
 func (tv *Var) SetLink(t Type) {
 	tv.link = t
-	tv.level = tv.levelNum() | LinkVarLevel
+	tv.level = tv.levelNum() | (tv.level & RestrictedLevelMask) | LinkVarLevel
+}
+
+// Restrict t as a size type-variable. Size type-variables may only unify with size types.
+func (tv *Var) RestrictSizeVar() {
+	tv.level = (tv.level &^ RestrictedLevelMask) | SizeVarLevel
 }
 
 // Constrain the type-variable to types which implement a set of type-classes.

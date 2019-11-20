@@ -27,12 +27,7 @@ import (
 )
 
 var intDedupePool = sync.Pool{
-	New: func() interface{} {
-		// The Pool's New function should generally only return pointer
-		// types, since a pointer can be put into the return interface
-		// value without an allocation:
-		return make(IntDedupeMap, 32)
-	},
+	New: func() interface{} { return make(IntDedupeMap, 32) },
 }
 
 type IntDedupeMap map[int]bool

@@ -52,15 +52,21 @@ func visitTypeVars(level int, t Type, weak, forceGeneralize bool, ngeneric, nref
 			visitTypeVars(level, t.Link(), weak, forceGeneralize, ngeneric, nref)
 		case t.IsGenericVar():
 			*ngeneric++
-			if weak && !t.IsWeakVar() {
+			// Weak type-variables may not be re-generalized after instantiation:
+			if weak {
 				t.SetWeak()
 			}
 		default: // weak or unbound
+			// See "Efficient Generalization with Levels" (Oleg Kiselyov) -- http://okmij.org/ftp/ML/generalization.html#levels
+			//
+			// If the current level is less than the type-variable's level, a let-binding where the type-variable was instantiated
+			// is being generalized:
 			if t.LevelNum() > level && (forceGeneralize || (!weak && !t.IsWeakVar())) {
 				*ngeneric++
 				t.SetGeneric()
 			}
-			if weak && !t.IsWeakVar() {
+			// Weak type-variables may not be re-generalized after instantiation:
+			if weak {
 				t.SetWeak()
 			}
 		}
@@ -71,7 +77,7 @@ func visitTypeVars(level int, t Type, weak, forceGeneralize bool, ngeneric, nref
 		if rec.Generalized || rec.Instantiated {
 			return
 		}
-		rec.Generalized, rec.Instantiated = true, false
+		rec.Generalized = true
 		for _, ti := range rec.Types {
 			visitTypeVars(level, ti, weak, forceGeneralize, ngeneric, nref)
 		}

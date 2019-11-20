@@ -32,7 +32,20 @@ import (
 func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret types.Type, err error) {
 	switch e := e.(type) {
 	case *ast.Literal:
-		t, err := e.Construct(env, level)
+		var using []types.Type
+		// Lookup types for variables bound within the literal:
+		if len(e.Using) != 0 {
+			using = make([]types.Type, len(e.Using))
+			for i, name := range e.Using {
+				vt := env.Lookup(name)
+				if vt == nil {
+					return nil, errors.New("Variable " + name + " not is not defined")
+				}
+				using[i] = vt
+			}
+		}
+		// Construct and instantiate the literal with the bound variable types:
+		t, err := e.Construct(env, level, using)
 		if err != nil {
 			ti.invalid, ti.err = e, err
 			return t, err
@@ -62,15 +75,18 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			if err != nil {
 				return nil, err
 			}
+			// Begin a new scope:
 			stashed := ti.common.Stash(env, e.Var)
 			env.Assign(e.Var, types.GeneralizeAtLevel(level, t))
 			t, err = ti.infer(env, level, e.Body)
 			env.Remove(e.Var)
+			// Restore the parent scope:
 			ti.common.Unstash(env, stashed)
 			return t, err
 		}
 		// Allow self-references within function types:
 		tv := ti.common.VarTracker.New(level + 1)
+		// Begin a new scope:
 		stashed := ti.common.Stash(env, e.Var)
 		env.Assign(e.Var, tv)
 		t, err := ti.infer(env, level+1, e.Value)
@@ -84,6 +100,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		env.Assign(e.Var, types.GeneralizeAtLevel(level, t))
 		t, err = ti.infer(env, level, e.Body)
 		env.Remove(e.Var)
+		// Restore the parent scope:
 		ti.common.Unstash(env, stashed)
 		return t, err
 
@@ -95,12 +112,14 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			}
 			ti.analyzed = true
 		}
-		stashed := 0
+		stashed, groupNum := 0, ti.letGroupCount
+		ti.letGroupCount++
 		// Grouped let-bindings are sorted into strongly-connected components, then type-checked in dependency order:
-		for _, scc := range ti.analysis.Sccs[ti.analysis.GroupNums[e]] {
+		for _, scc := range ti.analysis.Sccs[groupNum] {
 			// Add fresh type-variables for bindings:
 			vars := ti.common.VarTracker.NewList(level+1, len(scc))
 			tv, tail := vars.Head(), vars.Tail()
+			// Begin a new scope:
 			for _, bindNum := range scc {
 				v := e.Vars[bindNum]
 				stashed += ti.common.Stash(env, v.Var)
@@ -153,6 +172,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		for _, v := range e.Vars {
 			env.Remove(v.Var)
 		}
+		// Restore the parent scope:
 		ti.common.Unstash(env, stashed)
 		return t, err
 
@@ -161,6 +181,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		stashed := 0
 		vars := ti.common.VarTracker.NewList(level, len(e.ArgNames))
 		tv, tail := vars.Head(), vars.Tail()
+		// Begin a new scope:
 		for i, name := range e.ArgNames {
 			stashed += ti.common.Stash(env, name)
 			args[i] = tv
@@ -171,6 +192,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		for _, name := range e.ArgNames {
 			env.Remove(name)
 		}
+		// Restore the parent scope:
 		ti.common.Unstash(env, stashed)
 		t := &types.Arrow{Args: args, Return: ret}
 		if ti.annotate {
@@ -293,10 +315,12 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			return retType, nil
 		}
 		defaultType := ti.common.VarTracker.New(level)
+		// Begin a new scope:
 		stashed := ti.common.Stash(env, e.Default.Var)
 		env.Assign(e.Default.Var, &types.Variant{Row: defaultType})
 		retType, err := ti.infer(env, level, e.Default.Value)
 		env.Remove(e.Default.Var)
+		// Restore the parent scope:
 		ti.common.Unstash(env, stashed)
 		if err != nil {
 			return nil, err
@@ -402,11 +426,13 @@ func (ti *InferenceContext) inferCases(env *TypeEnv, level int, retType, rowType
 		c := cases[i]
 		// Infer the return expression for the case with the variable-name temporarily bound in the environment:
 		variantType := tv
+		// Begin a new scope:
 		stashed := ti.common.Stash(env, c.Var)
 		env.Assign(c.Var, variantType)
 		c.SetVariantType(variantType)
 		t, err := ti.infer(env, level, c.Value)
 		env.Remove(c.Var)
+		// Restore the parent scope:
 		ti.common.Unstash(env, stashed)
 		if err != nil {
 			return nil, err

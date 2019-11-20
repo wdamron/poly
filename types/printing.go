@@ -88,6 +88,9 @@ func typeString(p *typePrinter, simple bool, t Type) {
 	case *Const:
 		p.sb.WriteString(t.Name)
 
+	case Size:
+		p.sb.WriteString(strconv.Itoa(int(t)))
+
 	case *Var:
 		switch {
 		case t.IsUnboundVar():
@@ -115,7 +118,7 @@ func typeString(p *typePrinter, simple bool, t Type) {
 			p.idNames[t.Id()] = name
 			p.sb.WriteString(name)
 		}
-		if len(t.constraints) == 0 && !t.IsWeakVar() {
+		if len(t.constraints) == 0 && !t.IsWeakVar() && !t.IsSizeVar() {
 			return
 		}
 		if p.preds != nil && len(p.preds[t.Id()]) > 0 {
@@ -123,9 +126,12 @@ func typeString(p *typePrinter, simple bool, t Type) {
 		} else if p.preds == nil {
 			p.preds = make(map[int][]string)
 		}
-		preds := make([]string, 0, len(t.constraints)+1)
+		preds := make([]string, 0, len(t.constraints)+2) // space for [weak, size]
 		if t.IsWeakVar() {
 			preds = append(preds, "weak")
+		}
+		if t.IsSizeVar() {
+			preds = append(preds, "size")
 		}
 		for _, c := range t.constraints {
 			preds = append(preds, c.TypeClass.Name)
