@@ -68,6 +68,32 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		}
 		return t, nil
 
+	case *ast.Pipe:
+		// Inline equivalent to inferring as nested (non-recursive) let-bindings:
+		t, err := ti.infer(env, level+1, e.Source)
+		if err != nil {
+			return nil, err
+		}
+		if len(e.Sequence) == 0 {
+			if ti.annotate {
+				e.SetType(t)
+			}
+			return t, nil
+		}
+		stashed := ti.common.Stash(env, e.As)
+		for _, step := range e.Sequence {
+			// Reassign the placeholder:
+			env.Assign(e.As, types.GeneralizeAtLevel(level, t))
+			t, err = ti.infer(env, level, step)
+		}
+		if ti.annotate && err != nil {
+			e.SetType(t)
+		}
+		// Restore the parent scope:
+		env.Remove(e.As)
+		ti.common.Unstash(env, stashed)
+		return t, err
+
 	case *ast.Let:
 		// Disallow self-references within non-function types:
 		if _, isFunc := e.Value.(*ast.Func); !isFunc {
@@ -206,6 +232,8 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			return nil, err
 		}
 
+		// If t is an unbound type-variable, instantiate a function with unbound type-variables for its
+		// arguments and return value; otherwise, ensure t has the correct argument count.
 		arrow, err := ti.matchFuncType(len(e.Args), ft)
 		if err != nil {
 			ti.invalid, ti.err = e, err
@@ -298,6 +326,13 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		return vt, nil
 
 	case *ast.Match:
+		// Inline equivalent to inferring a record-select on a record constructed from the cases,
+		// where each case is represented as a labeled function from the case's variant-type to the
+		// shared return type for the match expression:
+		//
+		// variant := [:a 'a]
+		// handler := ({a : 'a -> 'result, b : 'b -> 'result})[variant.label]
+		// result := handler(variant.value)
 		if e.Default == nil {
 			retType := ti.common.VarTracker.New(level)
 			matchType, err := ti.infer(env, level, e.Value)

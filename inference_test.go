@@ -54,6 +54,56 @@ func TestLiterals(t *testing.T) {
 	}
 }
 
+func TestPipes(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	env.Declare("x", TConst("int"))
+	env.Declare("id", TArrow1(TConst("int"), TConst("int")))
+	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
+	env.Declare("itoa", TArrow1(TConst("int"), TConst("string")))
+
+	expr := Pipe("$", Var("x"),
+		Call(Var("itoa"), Var("$")))
+
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "string" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	expr = Pipe("$", Var("x"),
+		Call(Var("id"), Var("$")),
+		Call(Var("itoa"), Var("$")))
+
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "string" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+
+	expr = Pipe("$", Var("x"),
+		Call(Var("id"), Var("$")),
+		Call(Var("add"), Var("$"), Var("$")),
+		Call(Var("itoa"), Var("$")))
+
+	if ast.ExprString(expr) != "pipe $ = x |> id($) |> add($, $) |> itoa($)" {
+		t.Fatalf("expr: %s", ast.ExprString(expr))
+	}
+
+	ty, err = ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != "string" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+}
+
 func TestSizes(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()

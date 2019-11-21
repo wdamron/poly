@@ -75,6 +75,26 @@ func exprString(sb *strings.Builder, simple bool, e Expr) {
 			sb.WriteByte(')')
 		}
 
+	case *Pipe:
+		if len(e.Sequence) == 0 {
+			exprString(sb, simple, e.Source)
+			return
+		}
+		if simple {
+			sb.WriteByte('(')
+		}
+		sb.WriteString("pipe ")
+		sb.WriteString(e.As)
+		sb.WriteString(" = ")
+		exprString(sb, true, e.Source)
+		for _, step := range e.Sequence {
+			sb.WriteString(" |> ")
+			exprString(sb, true, step)
+		}
+		if simple {
+			sb.WriteByte(')')
+		}
+
 	case *Let:
 		if simple {
 			sb.WriteByte('(')

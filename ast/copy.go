@@ -40,6 +40,13 @@ func CopyExpr(e Expr) Expr {
 	case *Func:
 		return &Func{e.ArgNames, CopyExpr(e.Body), e.inferred}
 
+	case *Pipe:
+		seq := make([]Expr, len(e.Sequence))
+		for i, step := range e.Sequence {
+			seq[i] = CopyExpr(step)
+		}
+		return &Pipe{CopyExpr(e.Source), e.As, seq, e.inferred}
+
 	case *Let:
 		return &Let{e.Var, CopyExpr(e.Value), CopyExpr(e.Body)}
 

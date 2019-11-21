@@ -292,6 +292,7 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 			// unify b with a's underlying type
 			return ctx.Unify(underB, a)
 		}
+		// a is a type application; swapping a/b will fallthrough to the case above
 		return ctx.Unify(b, a)
 	case underA != nil: // both are aliases
 		// Const and Args are unified in the main switch below
@@ -385,17 +386,23 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 	return errors.New("Failed to unify " + types.TypeName(a) + " with " + types.TypeName(b))
 }
 
-// returns a unification error or extra types in a and b, respectively, if the lengths do not match
+// Returns a unification error or extra types in a and b, respectively, if the lengths do not match.
+// Lists are unified from higher indexes to lower indexes, starting at the highest index of each list:
+// [0: a, 1: b, 2: c, 3: d] ==> extra types in a: [0: a]
+//       [0: b, 1: c, 2: d] ==> extra types in b: []
 func (ctx *CommonContext) unifyLists(a, b types.TypeList) (extraA, extraB types.TypeList, err error) {
 	la, lb := a.Len(), b.Len()
-	swapped := false
+	n := la
 	if lb > la {
-		a, b, la, lb = b, a, lb, la
-		swapped = true
+		extraA, extraB = types.EmptyTypeList, b.Slice(0, lb-la)
+		// rearrange so the longer list is on the left-hand side:
+		n, a, b, la, lb = lb, b, a, lb, la
+	} else if la > lb {
+		extraA, extraB = a.Slice(0, la-lb), types.EmptyTypeList
+	} else {
+		extraA, extraB = types.EmptyTypeList, types.EmptyTypeList
 	}
-	extraA, extraB = a.Slice(0, la-lb), types.EmptyTypeList
 	ai, bi := la-lb, 0
-	n := a.Len()
 	for ai < n {
 		va, vb := a.Get(ai), b.Get(bi)
 		if err := ctx.Unify(va, vb); err != nil {
@@ -403,9 +410,6 @@ func (ctx *CommonContext) unifyLists(a, b types.TypeList) (extraA, extraB types.
 		}
 		ai++
 		bi++
-	}
-	if swapped {
-		extraA, extraB = extraB, extraA
 	}
 	return extraA, extraB, nil
 }

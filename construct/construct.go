@@ -149,6 +149,11 @@ func Func3(arg1, arg2, arg3 string, body ast.Expr) *ast.Func {
 	return &ast.Func{ArgNames: []string{arg1, arg2, arg3}, Body: body}
 }
 
+// Pipeline: `pipe $ = xs |> fmap($, fn (x) -> to_y(x)) |> fmap($, fn (y) -> to_z(y))`
+func Pipe(as string, sequence ...ast.Expr) *ast.Pipe {
+	return &ast.Pipe{Source: sequence[0], As: as, Sequence: sequence[1:]}
+}
+
 // Let-binding: `let a = 1 in e`
 func Let(varName string, value ast.Expr, body ast.Expr) *ast.Let {
 	return &ast.Let{Var: varName, Value: value, Body: body}

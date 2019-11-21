@@ -37,6 +37,7 @@ type Expr interface {
 var (
 	_ Expr = (*Literal)(nil)
 	_ Expr = (*Var)(nil)
+	_ Expr = (*Pipe)(nil)
 	_ Expr = (*Call)(nil)
 	_ Expr = (*Func)(nil)
 	_ Expr = (*Let)(nil)
@@ -287,3 +288,25 @@ func (e *MatchCase) VariantType() types.Type { return types.RealType(e.varType) 
 
 // Assign a variant-type to e. Type assignments should occur indirectly, during inference.
 func (e *MatchCase) SetVariantType(t types.Type) { e.varType = t }
+
+// Pipeline: `pipe $ = xs |> fmap($, fn (x) -> to_y(x)) |> fmap($, fn (y) -> to_z(y))`
+type Pipe struct {
+	Source   Expr
+	As       string
+	Sequence []Expr
+	inferred types.Type
+}
+
+// "Pipe"
+func (e *Pipe) ExprName() string { return "Pipe" }
+
+// Get the inferred (or assigned) type of e.
+func (e *Pipe) Type() types.Type {
+	if len(e.Sequence) == 0 {
+		return nil
+	}
+	return e.Sequence[len(e.Sequence)-1].Type()
+}
+
+// Assign a type to e. Type assignments should occur indirectly, during inference.
+func (e *Pipe) SetType(t types.Type) { e.inferred = t }

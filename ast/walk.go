@@ -24,7 +24,7 @@ package ast
 
 func WalkExpr(e Expr, f func(Expr)) {
 	switch e := e.(type) {
-	case *Var:
+	case *Var, *Literal, *RecordEmpty:
 		f(e)
 
 	case *Call:
@@ -36,6 +36,12 @@ func WalkExpr(e Expr, f func(Expr)) {
 	case *Func:
 		f(e)
 		WalkExpr(e.Body, f)
+
+	case *Pipe:
+		f(e.Source)
+		for _, step := range e.Sequence {
+			WalkExpr(step, f)
+		}
 
 	case *Let:
 		f(e)
@@ -63,9 +69,6 @@ func WalkExpr(e Expr, f func(Expr)) {
 	case *RecordRestrict:
 		f(e)
 		WalkExpr(e.Record, f)
-
-	case *RecordEmpty:
-		f(e)
 
 	case *Variant:
 		f(e)
