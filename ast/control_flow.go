@@ -39,6 +39,14 @@ type ControlFlow struct {
 	inferred types.Type
 }
 
+func NewControlFlow(locals ...string) *ControlFlow {
+	return &ControlFlow{
+		Locals: locals,
+		Entry:  Block{-1, nil},
+		Return: Block{-1, nil},
+	}
+}
+
 type Block struct {
 	Index    int
 	Sequence []Expr

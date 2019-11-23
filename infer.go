@@ -95,8 +95,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		return t, err
 
 	case *ast.ControlFlow:
-		// Evaluate all sub-expressions with the local variables bound to weak type-variables.
-		// Begin a new scope:
+		// Evaluate all sub-expressions in a new scope with the local variables bound to weak type-variables:
 		stashed := 0
 		for _, name := range e.Locals {
 			stashed += ti.common.Stash(env, name)
@@ -116,6 +115,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 				}
 			}
 		}
+		var ret types.Type
 		for i, sub := range e.Return.Sequence {
 			t, err := ti.infer(env, level+1, sub)
 			if err != nil {
@@ -124,6 +124,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			if i != len(e.Return.Sequence)-1 {
 				continue
 			}
+			ret = t
 			if ti.annotate {
 				e.SetType(t)
 			}
@@ -133,6 +134,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			env.Remove(name)
 		}
 		ti.common.Unstash(env, stashed)
+		return ret, nil
 
 	case *ast.Let:
 		// Disallow self-references within non-function types:

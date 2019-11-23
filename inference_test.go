@@ -88,6 +88,36 @@ func TestPipes(t *testing.T) {
 	mustInfer(t, env, ctx, expr, "string")
 }
 
+func TestControlFlow(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	env.Declare("zero", TConst("int"))
+	env.Declare("inc", TArrow1(TConst("int"), TConst("int")))
+	env.Declare("dec", TArrow1(TConst("int"), TConst("int")))
+	env.Declare("cmp", TArrow2(TConst("int"), TConst("int"), TConst("bool")))
+
+	cfg := ast.NewControlFlow("x")
+
+	cfg.SetEntry(
+		Call(Var("dec"), Var("x")),
+		Call(Var("cmp"), Var("x"), Var("zero")))
+
+	cfg.SetReturn(Var("x"))
+
+	cfg.AddJump(cfg.Entry, cfg.Return)
+
+	body := cfg.AddBlock(
+		Call(Var("inc"), Var("x")),
+		Call(Var("cmp"), Var("x"), Var("zero")))
+
+	cfg.AddJump(cfg.Entry, body)
+	cfg.AddJump(body, body)
+	cfg.AddJump(body, cfg.Return)
+
+	mustInfer(t, env, ctx, cfg, "int")
+}
+
 func TestSizes(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()

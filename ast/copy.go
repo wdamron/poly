@@ -92,6 +92,27 @@ func CopyExpr(e Expr) Expr {
 			defaultCase = &MatchCase{defaultCase.Label, defaultCase.Var, CopyExpr(defaultCase.Value), defaultCase.varType}
 		}
 		return &Match{CopyExpr(e.Value), cases, defaultCase, e.inferred}
+
+	case *ControlFlow:
+		next := NewControlFlow(e.Locals...)
+		blocks := make([]Block, len(e.Blocks))
+		for i, b := range e.Blocks {
+			blocks[i].Sequence = make([]Expr, len(b.Sequence))
+			for j, sub := range b.Sequence {
+				blocks[i].Sequence[j] = CopyExpr(sub)
+			}
+			blocks[i].Index = b.Index
+		}
+		next.Entry.Sequence = make([]Expr, len(e.Entry.Sequence))
+		for i, sub := range e.Entry.Sequence {
+			next.Entry.Sequence[i] = CopyExpr(sub)
+		}
+		next.Return.Sequence = make([]Expr, len(e.Return.Sequence))
+		for i, sub := range e.Return.Sequence {
+			next.Return.Sequence[i] = CopyExpr(sub)
+		}
+		copy(next.Jumps, e.Jumps)
+		return next
 	}
 	panic("unknown expression type: " + e.ExprName())
 }

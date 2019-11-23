@@ -75,6 +75,9 @@ func exprString(sb *strings.Builder, simple bool, e Expr) {
 			sb.WriteByte(')')
 		}
 
+	case *ControlFlow:
+		sb.WriteString("<controlflow>")
+
 	case *Pipe:
 		if len(e.Sequence) == 0 {
 			exprString(sb, simple, e.Source)
