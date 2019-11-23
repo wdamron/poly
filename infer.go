@@ -94,6 +94,46 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		ti.common.Unstash(env, stashed)
 		return t, err
 
+	case *ast.ControlFlow:
+		// Evaluate all sub-expressions with the local variables bound to weak type-variables.
+		// Begin a new scope:
+		stashed := 0
+		for _, name := range e.Locals {
+			stashed += ti.common.Stash(env, name)
+			tv := ti.common.VarTracker.New(level)
+			tv.SetWeak()
+			env.Assign(name, tv)
+		}
+		for _, sub := range e.Entry.Sequence {
+			if _, err := ti.infer(env, level+1, sub); err != nil {
+				return nil, err
+			}
+		}
+		for _, block := range e.Blocks {
+			for _, sub := range block.Sequence {
+				if _, err := ti.infer(env, level+1, sub); err != nil {
+					return nil, err
+				}
+			}
+		}
+		for i, sub := range e.Return.Sequence {
+			t, err := ti.infer(env, level+1, sub)
+			if err != nil {
+				return nil, err
+			}
+			if i != len(e.Return.Sequence)-1 {
+				continue
+			}
+			if ti.annotate {
+				e.SetType(t)
+			}
+		}
+		// Restore the parent scope:
+		for _, name := range e.Locals {
+			env.Remove(name)
+		}
+		ti.common.Unstash(env, stashed)
+
 	case *ast.Let:
 		// Disallow self-references within non-function types:
 		if _, isFunc := e.Value.(*ast.Func); !isFunc {

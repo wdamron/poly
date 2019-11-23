@@ -301,12 +301,7 @@ type Pipe struct {
 func (e *Pipe) ExprName() string { return "Pipe" }
 
 // Get the inferred (or assigned) type of e.
-func (e *Pipe) Type() types.Type {
-	if len(e.Sequence) == 0 {
-		return nil
-	}
-	return e.Sequence[len(e.Sequence)-1].Type()
-}
+func (e *Pipe) Type() types.Type { return types.RealType(e.inferred) }
 
 // Assign a type to e. Type assignments should occur indirectly, during inference.
 func (e *Pipe) SetType(t types.Type) { e.inferred = t }
