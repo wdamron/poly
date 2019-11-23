@@ -96,77 +96,26 @@ func (e *TypeEnv) NewQualifiedVar(constraints ...types.InstanceConstraint) *type
 //
 // The bind function should add aliased types with underlying types which are recursively linked
 // to one or more types in the Recursive.
-func (e *TypeEnv) NewRecursive(bind func(*types.Recursive)) (*types.Recursive, error) {
-	rec := &types.Recursive{Id: e.freshId()}
-	bind(rec)
-	for i, ti := range rec.Types {
-		// Generalizing any of the recursive types will generalize the Recursive (once)
-		rec.Types[i] = types.GeneralizeWeak(ti).(*types.App)
+func (e *TypeEnv) NewRecursive(params []*types.Var, bind func(recursive *types.Recursive)) *types.Recursive {
+	rec := &types.Recursive{Params: params, Bind: bind, Flags: types.NeedsGeneralization}
+	for i, tv := range rec.Params {
+		rec.Params[i] = types.Generalize(tv).(*types.Var)
 	}
-	return rec, nil
+	bind(rec)
+	for i, alias := range rec.Types {
+		rec.Types[i] = types.Generalize(alias).(*types.App)
+	}
+	return rec
 }
 
 // Create a new recursive type.
 //
 // The bindSelf function should add a single aliased type with an underlying type which is recursively linked
 // to the Recursive.
-func (e *TypeEnv) NewSimpleRecursive(bindSelf func(*types.Recursive, *types.RecursiveLink)) (*types.Recursive, error) {
-	bind := func(rec *types.Recursive) {
+func (e *TypeEnv) NewSimpleRecursive(params []*types.Var, bindSelf func(*types.Recursive, *types.RecursiveLink)) *types.Recursive {
+	return e.NewRecursive(params, func(rec *types.Recursive) {
 		bindSelf(rec, &types.RecursiveLink{Recursive: rec, Index: 0})
-	}
-	rec, err := e.NewRecursive(bind)
-	if err != nil {
-		return nil, err
-	}
-	if len(rec.Types) != 1 {
-		return nil, errors.New("Simple recursive type groups must contain a single recursive type")
-	}
-	return rec, nil
-}
-
-// Create a new recursive type or group of mutually-recursive types which instantiates (unifies with) a generic
-// recursive type of group of mutually-recursive types.
-//
-// The bind function should add aliased types with underlying types which are recursively linked to one or more
-// types in the Recursive.
-func (e *TypeEnv) NewRecursiveInstance(parent *types.Recursive, bind func(*types.Recursive)) (*types.Recursive, error) {
-	rec := &types.Recursive{Id: parent.Id}
-	bind(rec)
-	if len(rec.Types) != len(parent.Types) {
-		return nil, errors.New("Recursive instance must have the same number of types as the parent group")
-	}
-	for i, ti := range rec.Types {
-		// Generalizing any of the recursive types will generalize the Recursive (once)
-		rec.Types[i] = types.GeneralizeWeak(ti).(*types.App)
-	}
-	if e.common == nil {
-		e.common = &typeutil.CommonContext{}
-		e.common.Init()
-	}
-	for i, ti := range rec.Types {
-		if !e.common.CanUnify(e.common.Instantiate(types.TopLevel, ti), e.common.Instantiate(types.TopLevel, parent.Types[i])) {
-			return nil, errors.New("Recursive instance must instantiate (unify with) the parent group")
-		}
-	}
-	return rec, nil
-}
-
-// Create a new recursive type which instantiates (unifies with) a generic recursive type.
-//
-// The bindSelf function should add a single aliased type with an underlying type which is recursively linked
-// to the Recursive.
-func (e *TypeEnv) NewSimpleRecursiveInstance(parent *types.Recursive, bindSelf func(*types.Recursive, *types.RecursiveLink)) (*types.Recursive, error) {
-	bind := func(rec *types.Recursive) {
-		bindSelf(rec, &types.RecursiveLink{Recursive: rec, Index: 0})
-	}
-	rec, err := e.NewRecursiveInstance(parent, bind)
-	if err != nil {
-		return nil, err
-	}
-	if len(rec.Types) != 1 {
-		return nil, errors.New("Simple recursive type groups must contain a single recursive type")
-	}
-	return rec, nil
+	})
 }
 
 // Declare a type for an identifier within the type environment.

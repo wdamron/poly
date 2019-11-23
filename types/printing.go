@@ -26,17 +26,45 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+var printerPool = sync.Pool{
+	New: func() interface{} {
+		p := &typePrinter{
+			idNames: make(map[int]string, 16),
+			preds:   make(map[int][]string, 16),
+		}
+		p.order = p._order[:0]
+		return p
+	},
+}
+
+func newTypePrinter() *typePrinter { return printerPool.Get().(*typePrinter) }
+
+func (p *typePrinter) Release() {
+	for k := range p.idNames {
+		delete(p.idNames, k)
+	}
+	for k := range p.preds {
+		delete(p.preds, k)
+	}
+	p.order = p._order[:0]
+	p.sb.Reset()
+	printerPool.Put(p)
+}
 
 // TypeString returns a string representation of a Type.
 func TypeString(t Type) string {
-	p := typePrinter{}
-	typeString(&p, false, t)
+	p := newTypePrinter()
+	typeString(p, false, t)
 	if len(p.preds) == 0 {
-		return p.sb.String()
+		s := p.sb.String()
+		p.Release()
+		return s
 	}
 
-	order := make([]int, 0, len(p.preds))
+	order := p.order
 	for id := range p.preds {
 		order = append(order, id)
 	}
@@ -66,12 +94,15 @@ func TypeString(t Type) string {
 
 	sb.WriteString(" => ")
 	sb.WriteString(p.sb.String())
+	p.Release()
 	return sb.String()
 }
 
 type typePrinter struct {
 	idNames map[int]string
 	preds   map[int][]string
+	order   []int
+	_order  [16]int
 	sb      strings.Builder
 }
 

@@ -39,15 +39,11 @@ type StashedLink struct {
 func (l *StashedLink) Restore() { *l.v = l.prev }
 
 type CommonContext struct {
-	VarTracker    VarTracker
-	EnvStash      []StashedType            // shadowed variables
-	LinkStash     []StashedLink            // stashed type-variables (during speculative unification)
-	InstLookup    map[int]*types.Var       // instantiation lookup for generic type-variables
-	RecInstLookup map[int]*types.Recursive // instantiation lookup for mutually-recursive type groups
-	Speculate     bool
-
-	// cache of the most-recently matched instance by type-class id:
-	LastInstanceMatch map[int]*types.Instance
+	VarTracker VarTracker
+	EnvStash   []StashedType      // shadowed variables
+	LinkStash  []StashedLink      // stashed type-variables (during speculative unification)
+	InstLookup map[int]*types.Var // instantiation lookup for generic type-variables
+	Speculate  bool
 
 	// initial space:
 	_envStash  [32]StashedType
@@ -55,8 +51,8 @@ type CommonContext struct {
 }
 
 func (ctx *CommonContext) Init() {
-	ctx.EnvStash, ctx.LinkStash, ctx.InstLookup, ctx.RecInstLookup =
-		ctx._envStash[:0], ctx._linkStash[:0], make(map[int]*types.Var, 16), make(map[int]*types.Recursive, 16)
+	ctx.EnvStash, ctx.LinkStash, ctx.InstLookup =
+		ctx._envStash[:0], ctx._linkStash[:0], make(map[int]*types.Var, 16)
 }
 
 func (ctx *CommonContext) Reset() {
@@ -66,25 +62,11 @@ func (ctx *CommonContext) Reset() {
 	}
 	ctx.EnvStash, ctx.LinkStash = ctx._envStash[:0], ctx._linkStash[:0]
 	ctx.ClearInstantiationLookup()
-	ctx.ClearRecursiveInstantiationLookup()
-	ctx.ClearLastInstanceCache()
 }
 
 func (ctx *CommonContext) ClearInstantiationLookup() {
 	for k := range ctx.InstLookup {
 		delete(ctx.InstLookup, k)
-	}
-}
-
-func (ctx *CommonContext) ClearRecursiveInstantiationLookup() {
-	for k := range ctx.RecInstLookup {
-		delete(ctx.RecInstLookup, k)
-	}
-}
-
-func (ctx *CommonContext) ClearLastInstanceCache() {
-	for k := range ctx.LastInstanceMatch {
-		delete(ctx.LastInstanceMatch, k)
 	}
 }
 

@@ -41,30 +41,30 @@ func BenchmarkMutuallyRecursiveLet(b *testing.B) { // ~14500 ns/op
 	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
 	env.Declare("somebool", TConst("bool"))
 
+	somebool := Var("somebool")
+	add := Var("add")
+	f := Var("f")
+	g := Var("g")
+	h := Var("h")
+	id := Var("id")
+	x := Var("x")
+
+	expr := LetGroup(
+		[]ast.LetBinding{
+			{"id", Func1("x", x)},
+			{"f", Func1("x", Call(Var("if"), Call(id, somebool), Call(id, x), Call(g, Call(add, x, x))))},
+			{"g", Func1("x", Call(Var("if"), somebool, x, Call(id, Call(f, x))))},
+		},
+		Let("h", Func1("x", Call(id, Call(f, x))),
+			RecordExtend(nil,
+				LabelValue("f", f),
+				LabelValue("g", g),
+				LabelValue("h", h),
+				LabelValue("id", id))))
+
 	b.ResetTimer()
 
 	for n := 0; n < b.N; n++ {
-		somebool := Var("somebool")
-		add := Var("add")
-		f := Var("f")
-		g := Var("g")
-		h := Var("h")
-		id := Var("id")
-		x := Var("x")
-
-		expr := LetGroup(
-			[]ast.LetBinding{
-				{"id", Func1("x", x)},
-				{"f", Func1("x", Call(Var("if"), Call(id, somebool), Call(id, x), Call(g, Call(add, x, x))))},
-				{"g", Func1("x", Call(Var("if"), somebool, x, Call(id, Call(f, x))))},
-			},
-			Let("h", Func1("x", Call(id, Call(f, x))),
-				RecordExtend(nil,
-					LabelValue("f", f),
-					LabelValue("g", g),
-					LabelValue("h", h),
-					LabelValue("id", id))))
-
 		ty, err := ctx.Infer(expr, env)
 		if err != nil || ty == nil {
 			b.Fatal(err)
@@ -81,22 +81,22 @@ func BenchmarkRecursiveLet(b *testing.B) { // ~3500 ns/op
 	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
 	env.Declare("somebool", TConst("bool"))
 
+	expr := Func1("x",
+		Let("f",
+			Func1("x",
+				Call(
+					Var("if"),
+					Var("somebool"),
+					Var("x"),
+					Call(Var("f"), Call(Var("add"), Var("x"), Var("x"))),
+				),
+			),
+			Call(Var("f"), Var("x")),
+		))
+
 	b.ResetTimer()
 
 	for n := 0; n < b.N; n++ {
-		expr := Func1("x",
-			Let("f",
-				Func1("x",
-					Call(
-						Var("if"),
-						Var("somebool"),
-						Var("x"),
-						Call(Var("f"), Call(Var("add"), Var("x"), Var("x"))),
-					),
-				),
-				Call(Var("f"), Var("x")),
-			))
-
 		ty, err := ctx.Infer(expr, env)
 		if err != nil || ty == nil {
 			b.Fatal(err)

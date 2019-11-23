@@ -27,16 +27,22 @@ import (
 )
 
 func (ctx *CommonContext) Instantiate(level int, t types.Type) types.Type {
+	// Path compression:
+	t = types.RealType(t)
+	// Non-generic types can be shared:
 	if !t.IsGeneric() {
 		return t
 	}
 	t = ctx.visitInstantiate(level, t)
 	ctx.ClearInstantiationLookup()
-	ctx.ClearRecursiveInstantiationLookup()
 	return t
 }
 
 func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
+	// Path compression:
+	t = types.RealType(t)
+
+	// Non-generic types can be shared:
 	if !t.IsGeneric() {
 		return t
 	}
@@ -47,40 +53,43 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 		if tv, ok := ctx.InstLookup[id]; ok {
 			return tv
 		}
-
-		tv := ctx.VarTracker.New(level)
+		next := ctx.VarTracker.New(level)
 		if t.IsWeakVar() {
-			tv.SetWeak()
+			next.SetWeak()
 		}
 		if t.IsSizeVar() {
-			tv.RestrictSizeVar()
+			next.RestrictSizeVar()
 		}
-
 		constraints := t.Constraints()
-		constraints2 := make([]types.InstanceConstraint, len(constraints))
-		copy(constraints2, constraints)
-		tv.SetConstraints(constraints2)
-		ctx.InstLookup[id] = tv
-		return tv
+		constraintsCopy := make([]types.InstanceConstraint, len(constraints))
+		copy(constraintsCopy, constraints)
+		next.SetConstraints(constraintsCopy)
+		ctx.InstLookup[t.Id()] = next
+		return next
 
 	case *types.RecursiveLink:
 		rec := t.Recursive
-		if next := ctx.RecInstLookup[t.Recursive.Id]; next != nil {
-			return &types.RecursiveLink{Recursive: next, Index: t.Index, Source: t}
-		}
 		next := &types.Recursive{
-			Id:           rec.Id,
-			Types:        make([]*types.App, len(rec.Types)),
-			Names:        rec.Names,
-			Indexes:      rec.Indexes,
-			Instantiated: true,
-			Flags:        rec.Flags,
+			Parent:  rec,
+			Params:  make([]*types.Var, len(rec.Params)),
+			Types:   make([]*types.App, 0, len(rec.Types)), // types are added during Bind
+			Names:   rec.Names,
+			Indexes: rec.Indexes,
+			Flags:   rec.Flags,
+			Bind:    rec.Bind,
 		}
-		copy(next.Types, rec.Types)
-		ctx.RecInstLookup[t.Recursive.Id] = next
-		for i, ti := range next.Types {
-			next.Types[i] = ctx.visitInstantiate(level, ti).(*types.App)
+		copy(next.Params, rec.Params)
+		for i, tv := range next.Params {
+			p := ctx.visitInstantiate(level, tv)
+			if tv, ok := p.(*types.Var); ok {
+				next.Params[i] = tv
+			} else {
+				tv = ctx.VarTracker.New(level)
+				tv.SetLink(p)
+				next.Params[i] = tv
+			}
 		}
+		next.Bind(next)
 		next.Flags &^= types.ContainsGenericVars
 		return &types.RecursiveLink{Recursive: next, Index: t.Index, Source: t}
 
@@ -115,32 +124,42 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 
 	case *types.RowExtend:
 		m := t.Labels
-		mb := m.Builder()
+		// if the labels don't contain generic types, they don't need to be copied:
+		var mb types.TypeMapBuilder
+		needsRebuild := false
+		builderInitialized := false
 		m.Range(func(label string, ts types.TypeList) bool {
 			// common case for unscoped labels:
 			if ts.Len() == 1 {
-				t := ts.Get(0)
+				t := types.RealType(ts.Get(0))
 				if t.IsGeneric() {
+					if !builderInitialized {
+						mb, builderInitialized, needsRebuild = m.Builder(), true, true
+					}
 					mb.Set(label, types.SingletonTypeList(ctx.visitInstantiate(level, t)))
 				}
 				return true
 			}
 			// only build a new type list (and update the map) if the existing list contains generic types:
-			generic := false
+			var lb types.TypeListBuilder
+			listNeedsRebuild := false
+			listBuilderInitialized := false
 			ts.Range(func(i int, t types.Type) bool {
-				generic = t.IsGeneric()
-				return generic
-			})
-			if !generic {
-				return true
-			}
-			lb := ts.Builder()
-			ts.Range(func(i int, t types.Type) bool {
+				t = types.RealType(t)
 				if t.IsGeneric() {
+					if !listBuilderInitialized {
+						lb, listBuilderInitialized, listNeedsRebuild = ts.Builder(), true, true
+					}
 					lb.Set(i, ctx.visitInstantiate(level, t))
 				}
 				return true
 			})
+			if !listNeedsRebuild {
+				return true
+			}
+			if !builderInitialized {
+				mb, builderInitialized, needsRebuild = m.Builder(), true, true
+			}
 			mb.Set(label, lb.Build())
 			return true
 		})
@@ -150,7 +169,10 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 		} else if _, ok := row.(*types.RowEmpty); !ok {
 			row = ctx.visitInstantiate(level, t.Row)
 		}
-		return &types.RowExtend{Row: row, Labels: mb.Build(), Source: t}
+		if needsRebuild {
+			m = mb.Build()
+		}
+		return &types.RowExtend{Row: row, Labels: m, Source: t}
 	}
 	panic("unexpected generic type " + t.TypeName())
 }

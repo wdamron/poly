@@ -49,6 +49,8 @@ type TypeEnv interface {
 	// Remove the assigned type for an identifier within the type environment. Parent environment(s) will not be affected,
 	// and the identifier's type will still be visible if defined in a parent environment.
 	Remove(name string)
+	// Create a new type-variable at a given binding-level.
+	NewVar(level int) *Var
 }
 
 // Type is the base for all types.
@@ -69,6 +71,8 @@ const (
 	ContainsRefs TypeFlags = 2
 	// Weakly-polymorphic types may not be generalized.
 	WeaklyPolymorphic = 4
+	// TypeFlags for a composite type which has already been generalized and should not be re-generalized.
+	NeedsGeneralization = 8
 )
 
 // Mutable references are applications of RefType (a mutable reference-type) with a single referenced type-parameter.
@@ -283,7 +287,10 @@ func FlattenRowType(t Type) (labels TypeMap, rest Type, err error) {
 	case nil, *RowEmpty:
 		return EmptyTypeMap, t, nil
 	case *RowExtend:
-		if rest, ok := t.Row.(*RowEmpty); ok {
+		switch rest := t.Row.(type) {
+		case *RowEmpty:
+			return t.Labels, rest, err
+		case *Var:
 			return t.Labels, rest, err
 		}
 	}

@@ -39,6 +39,7 @@ func MarkWeak(t Type) Type { return generalizeOpts(TopLevel, t, true, false) }
 
 func generalizeOpts(level int, t Type, weak, forceGeneralize bool) Type {
 	ngeneric, nref := 0, 0
+	// Path compression:
 	t = RealType(t)
 	visitTypeVars(level, t, weak, forceGeneralize, &ngeneric, &nref)
 	return t
@@ -72,14 +73,20 @@ func visitTypeVars(level int, t Type, weak, forceGeneralize bool, ngeneric, nref
 		}
 
 	case *RecursiveLink:
-		ng, nr := *ngeneric, *nref
-		weak, rec := true, t.Recursive
-		if rec.Generalized || rec.Instantiated {
+		rec := t.Recursive
+		if !rec.NeedsGeneralization() { // break cycles
+			if rec.IsGeneric() {
+				*ngeneric++
+			}
+			if rec.HasRefs() {
+				*nref++
+			}
 			return
 		}
-		rec.Generalized = true
-		for _, ti := range rec.Types {
-			visitTypeVars(level, ti, weak, forceGeneralize, ngeneric, nref)
+		ng, nr := *ngeneric, *nref
+		rec.Flags &^= NeedsGeneralization // break cycles
+		for _, alias := range rec.Types {
+			visitTypeVars(level, alias, weak, forceGeneralize, ngeneric, nref)
 		}
 		if *ngeneric > ng {
 			rec.Flags |= ContainsGenericVars
@@ -87,7 +94,6 @@ func visitTypeVars(level int, t Type, weak, forceGeneralize bool, ngeneric, nref
 		if *nref > nr {
 			rec.Flags |= ContainsRefs
 		}
-		return
 
 	case *App:
 		ng, nr := *ngeneric, *nref

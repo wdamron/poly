@@ -333,40 +333,31 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		// variant := [:a 'a]
 		// handler := ({a : 'a -> 'result, b : 'b -> 'result})[variant.label]
 		// result := handler(variant.value)
+		var (
+			retType, rowType types.Type
+			err              error
+		)
 		if e.Default == nil {
-			retType := ti.common.VarTracker.New(level)
-			matchType, err := ti.infer(env, level, e.Value)
-			casesRow, err := ti.inferCases(env, level, retType, types.RowEmptyPointer, e.Cases)
+			retType, rowType = ti.common.VarTracker.New(level), types.RowEmptyPointer
+		} else {
+			rowType = ti.common.VarTracker.New(level)
+			// Begin a new scope:
+			stashed := ti.common.Stash(env, e.Default.Var)
+			env.Assign(e.Default.Var, &types.Variant{Row: rowType})
+			retType, err = ti.infer(env, level, e.Default.Value)
+			// Restore the parent scope:
+			env.Remove(e.Default.Var)
+			ti.common.Unstash(env, stashed)
 			if err != nil {
 				return nil, err
 			}
-			if err := ti.common.Unify(matchType, &types.Variant{Row: casesRow}); err != nil {
-				ti.invalid, ti.err = e, err
-				return nil, err
-			}
-			if ti.annotate {
-				e.SetType(retType)
-			}
-			return retType, nil
-		}
-		defaultType := ti.common.VarTracker.New(level)
-		// Begin a new scope:
-		stashed := ti.common.Stash(env, e.Default.Var)
-		env.Assign(e.Default.Var, &types.Variant{Row: defaultType})
-		retType, err := ti.infer(env, level, e.Default.Value)
-		env.Remove(e.Default.Var)
-		// Restore the parent scope:
-		ti.common.Unstash(env, stashed)
-		if err != nil {
-			return nil, err
 		}
 		matchType, err := ti.infer(env, level, e.Value)
 		if err != nil {
 			return nil, err
 		}
-		casesRow, err := ti.inferCases(env, level, retType, defaultType, e.Cases)
+		casesRow, err := ti.inferCases(env, level, retType, rowType, e.Cases)
 		if err != nil {
-			ti.invalid, ti.err = e, err
 			return nil, err
 		}
 		if err := ti.common.Unify(matchType, &types.Variant{Row: casesRow}); err != nil {

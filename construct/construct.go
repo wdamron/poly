@@ -44,6 +44,11 @@ func TSize(size int) types.Size {
 	return types.Size(size)
 }
 
+// Recursive link to a type.
+func TRecursiveLink(rec *types.Recursive, name string) *types.RecursiveLink {
+	return &types.RecursiveLink{Recursive: rec, Index: rec.Indexes[name]}
+}
+
 // Type application: `list[int]`
 func TApp(constructor types.Type, args ...types.Type) *types.App {
 	return &types.App{Const: constructor, Args: args}
@@ -85,6 +90,11 @@ func TMethod(typeClass *types.TypeClass, name string) *types.Method {
 // Record type: `{...}`
 func TRecord(row types.Type) *types.Record {
 	return &types.Record{Row: row}
+}
+
+// Record type with fixed labels: `{...}`
+func TRecordFlat(labels map[string]types.Type) *types.Record {
+	return TRecord(TRowExtend(nil, TypeMap(labels)))
 }
 
 // Tagged (ad-hoc) variant-type: `[...]`

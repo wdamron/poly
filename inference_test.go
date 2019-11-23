@@ -32,6 +32,16 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
+func mustInfer(t *testing.T, env *TypeEnv, ctx *InferenceContext, expr ast.Expr, typeString string) {
+	ty, err := ctx.Infer(expr, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if types.TypeString(ty) != typeString {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+}
+
 func TestLiterals(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
@@ -44,14 +54,7 @@ func TestLiterals(t *testing.T) {
 			return TApp(TConst("vec"), using[0]), nil // x :: int |- vec[int]
 		},
 	}
-
-	ty, err := ctx.Infer(Let("vec", xvec, Var("vec")), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "vec[int]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, Let("vec", xvec, Var("vec")), "vec[int]")
 }
 
 func TestPipes(t *testing.T) {
@@ -66,25 +69,13 @@ func TestPipes(t *testing.T) {
 	expr := Pipe("$", Var("x"),
 		Call(Var("itoa"), Var("$")))
 
-	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "string" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "string")
 
 	expr = Pipe("$", Var("x"),
 		Call(Var("id"), Var("$")),
 		Call(Var("itoa"), Var("$")))
 
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "string" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "string")
 
 	expr = Pipe("$", Var("x"),
 		Call(Var("id"), Var("$")),
@@ -94,14 +85,7 @@ func TestPipes(t *testing.T) {
 	if ast.ExprString(expr) != "pipe $ = x |> id($) |> add($, $) |> itoa($)" {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
-
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "string" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "string")
 }
 
 func TestSizes(t *testing.T) {
@@ -113,38 +97,15 @@ func TestSizes(t *testing.T) {
 	env.Declare("xs", TApp(TConst("array"), TConst("int"), TSize(8)))
 	env.Declare("ys", TApp(TConst("array"), TConst("int"), TSize(16)))
 	env.Declare("zs", TApp(TConst("array"), TConst("int"), TConst("foo")))
-
 	env.Declare("add", TArrow2(intarray, intarray, intarray))
 
-	ty, err := ctx.Infer(Var("add"), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "size 'a => (array[int, 'a], array[int, 'a]) -> array[int, 'a]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
-
-	ty, err = ctx.Infer(Call(Var("add"), Var("xs"), Var("xs")), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "array[int, 8]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
-
-	ty, err = ctx.Infer(Call(Var("add"), Var("ys"), Var("ys")), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "array[int, 16]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
-
-	if _, err = ctx.Infer(Call(Var("add"), Var("xs"), Var("ys")), env); err == nil {
+	mustInfer(t, env, ctx, Var("add"), "size 'a => (array[int, 'a], array[int, 'a]) -> array[int, 'a]")
+	mustInfer(t, env, ctx, Call(Var("add"), Var("xs"), Var("xs")), "array[int, 8]")
+	mustInfer(t, env, ctx, Call(Var("add"), Var("ys"), Var("ys")), "array[int, 16]")
+	if _, err := ctx.Infer(Call(Var("add"), Var("xs"), Var("ys")), env); err == nil {
 		t.Fatalf("Expected size-mismatch error")
 	}
-
-	if _, err = ctx.Infer(Call(Var("add"), Var("zs"), Var("zs")), env); err == nil {
+	if _, err := ctx.Infer(Call(Var("add"), Var("zs"), Var("zs")), env); err == nil {
 		t.Fatalf("Expected size type-restriction error")
 	}
 }
@@ -155,27 +116,13 @@ func TestRefs(t *testing.T) {
 
 	a := env.NewVar(types.TopLevel)
 	env.DeclareWeak("r", TRef(a))
-	ty, err := ctx.Infer(Var("r"), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString := types.TypeString(ty)
-	if typeString != "weak '_0 => ref['_0]" {
-		t.Fatalf("types within references should not be generalized: %s", typeString)
-	}
+	mustInfer(t, env, ctx, Var("r"), "weak '_0 => ref['_0]")
 
 	a = env.NewGenericVar()
 	env.Declare("new", TArrow(nil, TRef(a)))
 	expr := RecordExtend(RecordEmpty(), LabelValue("id", Func1("x", Var("x"))), LabelValue("r", Call(Var("new"))))
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString = types.TypeString(ty)
-	if typeString != "weak '_3 => {id : 'a -> 'a, r : ref['_3]}" {
-		t.Fatalf("types within references should not be generalized: %s", typeString)
-	}
-
+	mustInfer(t, env, ctx, expr, "weak '_3 => {id : 'a -> 'a, r : ref['_3]}")
+	ty, _ := ctx.Infer(expr, env)
 	if !ty.HasRefs() {
 		t.Fatalf("type contains a reference")
 	}
@@ -192,28 +139,8 @@ func TestRecords(t *testing.T) {
 	env.Declare("b", TConst("B"))
 
 	record := RecordExtend(nil, LabelValue("a", Var("a")), LabelValue("b", Var("b")))
-
-	var expr ast.Expr = RecordSelect(record, "a")
-
-	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString := types.TypeString(ty)
-	if typeString != "A" {
-		t.Fatalf("expected A, found %s", typeString)
-	}
-
-	expr = RecordRestrict(record, "a")
-
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString = types.TypeString(ty)
-	if typeString != "{b : B}" {
-		t.Fatalf("expected {b : B}, found %s", typeString)
-	}
+	mustInfer(t, env, ctx, RecordSelect(record, "a"), "A")
+	mustInfer(t, env, ctx, RecordRestrict(record, "a"), "{b : B}")
 }
 
 func TestAliases(t *testing.T) {
@@ -240,217 +167,135 @@ func TestAliases(t *testing.T) {
 	env.Declare("someints2", intSlice)
 	env.Declare("someints3", TApp(TConst("slice"), TConst("int")))
 
-	ty, err := ctx.Infer(Var("someints"), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "{cap : int, data : ref[array[int]], len : int}" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
-
-	ty, err = ctx.Infer(Var("someints2"), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "slice[int]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, Var("someints"), "{cap : int, data : ref[array[int]], len : int}")
+	mustInfer(t, env, ctx, Var("someints2"), "slice[int]")
 
 	sel := Let("f", Func1("x", RecordSelect(Var("x"), "data")),
 		Call(Var("f"), Var("someints2")))
 
-	ty, err = ctx.Infer(sel, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "ref[array[int]]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, sel, "ref[array[int]]")
+	mustInfer(t, env, ctx, Call(Var("append"), Var("someints"), Var("someints")), "slice[int]")
+	mustInfer(t, env, ctx, Call(Var("append"), Var("someints"), Var("someints2")), "slice[int]")
+	mustInfer(t, env, ctx, Call(Var("append"), Var("someints2"), Var("someints3")), "slice[int]")
+}
 
-	ty, err = ctx.Infer(Call(Var("append"), Var("someints"), Var("someints")), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "slice[int]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+func TestRecursiveTypes(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
 
-	ty, err = ctx.Infer(Call(Var("append"), Var("someints"), Var("someints2")), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "slice[int]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	params := []*types.Var{env.NewGenericVar()}
+	list := env.NewSimpleRecursive(params, func(rec *types.Recursive, self *types.RecursiveLink) {
+		a := rec.Params[0]
+		rec.AddType("list", TAlias(TApp(TConst("list"), a),
+			TRecordFlat(map[string]types.Type{"head": a, "tail": self})))
+	})
 
-	ty, err = ctx.Infer(Call(Var("append"), Var("someints2"), Var("someints3")), env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "slice[int]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	env.Declare("someintlist", list.WithParams(env, TConst("int")).GetType("list"))
+
+	var expr ast.Expr = RecordSelect(RecordSelect(RecordSelect(Var("someintlist"), "tail"), "tail"), "tail")
+	mustInfer(t, env, ctx, expr, "list[int]")
+
+	expr = RecordSelect(RecordSelect(RecordSelect(Var("someintlist"), "tail"), "tail"), "head")
+	mustInfer(t, env, ctx, expr, "int")
+
+	a, b := env.NewGenericVar(), env.NewGenericVar()
+	listA, listB := list.WithParams(env, a).GetType("list"), list.WithParams(env, b).GetType("list")
+	env.Declare("list_map", TArrow2(listA, TArrow1(a, b), listB))
+	env.Declare("itoa", TArrow1(TConst("int"), TConst("string")))
+	env.Declare("atoi", TArrow1(TConst("string"), TConst("int")))
+
+	expr = RecordSelect(RecordSelect(Call(Var("list_map"), Var("someintlist"), Var("itoa")), "tail"), "tail")
+	mustInfer(t, env, ctx, expr, "list[string]")
+
+	expr = RecordSelect(RecordSelect(Call(Var("list_map"), Var("someintlist"), Var("itoa")), "tail"), "head")
+	mustInfer(t, env, ctx, expr, "string")
+
+	expr = Pipe("$", Var("someintlist"),
+		Call(Var("list_map"), Var("$"), Var("itoa")),
+		RecordSelect(Var("$"), "tail"),
+		Call(Var("list_map"), Var("$"), Var("atoi")),
+		RecordSelect(Var("$"), "tail"),
+		Call(Var("list_map"), Var("$"), Var("itoa")),
+		RecordSelect(Var("$"), "head"))
+
+	mustInfer(t, env, ctx, expr, "string")
 }
 
 func TestMutuallyRecursiveTypes(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	cycle, err := env.NewRecursive(func(rec *types.Recursive) {
+	cycle := env.NewRecursive(nil, func(rec *types.Recursive) {
 		int2bool := TApp(TConst("cycle"), TConst("int"), TConst("bool"))
 		bool2int := TApp(TConst("cycle"), TConst("bool"), TConst("int"))
 		rec.AddType("int2bool", int2bool)
 		rec.AddType("bool2int", bool2int)
-		int2bool.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
-			"v":    TConst("int"),
-			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["bool2int"]},
-		})))
-		bool2int.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
-			"v":    TConst("bool"),
-			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["int2bool"]},
-		})))
+		int2bool.Underlying = TRecordFlat(map[string]types.Type{
+			"v": TConst("int"), "link": TRecursiveLink(rec, "bool2int"),
+		})
+		bool2int.Underlying = TRecordFlat(map[string]types.Type{
+			"v": TConst("bool"), "link": TRecursiveLink(rec, "int2bool"),
+		})
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	int2bool := cycle.GetType("int2bool")
 	env.Declare("someint2bool", int2bool)
 
 	var expr ast.Expr = Var("someint2bool")
-
-	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "cycle[int, bool]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "cycle[int, bool]")
 
 	expr = Let("f", Func1("x", RecordSelect(Var("x"), "link")),
 		Call(Var("f"), Var("someint2bool")))
 
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "cycle[bool, int]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "cycle[bool, int]")
 
 	expr = Let("f", Func1("x", RecordSelect(Var("x"), "v")),
 		Call(Var("f"), Var("someint2bool")))
 
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "int" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "int")
 
 	expr = Let("link", RecordSelect(Var("someint2bool"), "link"),
 		RecordSelect(Var("link"), "link"))
 
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "cycle[int, bool]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "cycle[int, bool]")
 
-	expr = RecordSelect(RecordSelect(RecordSelect(RecordSelect(Var("someint2bool"), "link"), "link"), "link"), "v")
+	expr = Pipe("$", Var("someint2bool"),
+		RecordSelect(Var("$"), "link"),
+		RecordSelect(Var("$"), "link"),
+		RecordSelect(Var("$"), "link"),
+		RecordSelect(Var("$"), "v"))
 
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "bool" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "bool")
 }
 
 func TestGenericMutuallyRecursiveTypes(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
-	cycle, err := env.NewRecursive(func(rec *types.Recursive) {
-		a, b := env.NewGenericVar(), env.NewGenericVar()
+	params := []*types.Var{env.NewGenericVar(), env.NewGenericVar()}
+	cycle := env.NewRecursive(params, func(rec *types.Recursive) {
+		a, b := rec.Params[0], rec.Params[1]
 		a2b := TApp(TConst("cycle"), a, b)
 		b2a := TApp(TConst("cycle"), b, a)
 		rec.AddType("a2b", a2b)
 		rec.AddType("b2a", b2a)
-		a2b.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
-			"v":    a,
-			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["b2a"]},
-		})))
-		b2a.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
-			"v":    b,
-			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["a2b"]},
-		})))
+		a2b.Underlying = TRecordFlat(map[string]types.Type{
+			"v": a, "link": TRecursiveLink(rec, "b2a"),
+		})
+		b2a.Underlying = TRecordFlat(map[string]types.Type{
+			"v": b, "link": TRecursiveLink(rec, "a2b"),
+		})
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
 
-	a2b := cycle.GetType("a2b")
-	a2b = types.Generalize(a2b).(*types.App)
-	env.Declare("a2bid", TArrow1(a2b, a2b))
+	intboolcycle := cycle.WithParams(env, TConst("int"), TConst("bool"))
+	env.Declare("someint2bool", intboolcycle.GetType("a2b"))
 
-	intboolcycle, err := env.NewRecursiveInstance(cycle, func(rec *types.Recursive) {
-		int2bool := TApp(TConst("cycle"), TConst("int"), TConst("bool"))
-		bool2int := TApp(TConst("cycle"), TConst("bool"), TConst("int"))
-		rec.AddType("int2bool", int2bool)
-		rec.AddType("bool2int", bool2int)
-		int2bool.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
-			"v":    TConst("int"),
-			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["bool2int"]},
-		})))
-		bool2int.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
-			"v":    TConst("bool"),
-			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["int2bool"]},
-		})))
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	expr := Pipe("$", Var("someint2bool"),
+		RecordSelect(Var("$"), "link"),
+		RecordSelect(Var("$"), "link"),
+		RecordSelect(Var("$"), "link"))
 
-	int2bool := intboolcycle.GetType("int2bool")
-	env.Declare("someint2bool", int2bool)
-
-	expr := Let("x", Call(Var("a2bid"), Var("someint2bool")),
-		Let("y", RecordSelect(Var("x"), "link"),
-			Let("z", RecordSelect(Var("y"), "link"),
-				Var("z"))))
-
-	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "cycle[int, bool]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
-
-	// invalid:
-
-	_, err = env.NewRecursiveInstance(cycle, func(rec *types.Recursive) {
-		int2bool := TApp(TConst("cycle"), TConst("int"), TConst("bool"))
-		bool2int := TApp(TConst("cycle"), TConst("bool"), TConst("int"))
-		rec.AddType("int2bool", int2bool)
-		rec.AddType("bool2int", bool2int)
-		int2bool.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
-			"v":    TConst("int"),
-			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["bool2int"]},
-		})))
-		bool2int.Underlying = TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
-			"v":    TConst("bool"),
-			"link": &types.RecursiveLink{Recursive: rec, Index: rec.Indexes["bool2int"]}, // <-- should not unify
-		})))
-	})
-	if err == nil {
-		t.Fatalf("expected unification error for invalid recursive instance")
-	}
+	mustInfer(t, env, ctx, expr, "cycle[bool, int]")
 }
 
 func TestRecursiveLet(t *testing.T) {
@@ -478,13 +323,7 @@ func TestRecursiveLet(t *testing.T) {
 	if ast.ExprString(expr) != "fn (x) -> let f(x) = if(somebool, x, f(add(x, x))) in f(x)" {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
-	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "int -> int" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "int -> int")
 }
 
 func TestMutuallyRecursiveLet(t *testing.T) {
@@ -528,13 +367,7 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 	if ast.ExprString(expr) != expect {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
-	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "{f : int -> int, g : int -> int, h : int -> int, id : 'a -> 'a}" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "{f : int -> int, g : int -> int, h : int -> int, id : 'a -> 'a}")
 }
 
 func TestVariantMatch(t *testing.T) {
@@ -549,14 +382,7 @@ func TestVariantMatch(t *testing.T) {
 	env.Declare("somebool", TConst("bool"))
 
 	ifExpr := Call(Var("if"), Var("somebool"), Variant("i", Var("someint")), Variant("b", Var("somebool")))
-
-	ty, err := ctx.Infer(ifExpr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "[b : bool, i : int | 'a]" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, ifExpr, "[b : bool, i : int | 'a]")
 
 	matchExpr := Match(ifExpr, // [i : int, b : bool | 'a]
 		[]ast.MatchCase{
@@ -566,13 +392,7 @@ func TestVariantMatch(t *testing.T) {
 		// default case:
 		nil)
 
-	ty, err = ctx.Infer(matchExpr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "int" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, matchExpr, "int")
 
 	matchExpr = Match(ifExpr, // [i : int, b : bool | 'a]
 		[]ast.MatchCase{
@@ -583,8 +403,7 @@ func TestVariantMatch(t *testing.T) {
 		// default case:
 		nil)
 
-	ty, err = ctx.Infer(matchExpr, env)
-	if err == nil {
+	if _, err := ctx.Infer(matchExpr, env); err == nil {
 		t.Fatalf("expected error due to invalid variant argument for match")
 	}
 
@@ -602,13 +421,7 @@ func TestVariantMatch(t *testing.T) {
 	if ast.ExprString(expr) != "let f(x) = match x { :a i -> f(:b i) | :b i -> f(:c i) | :c i -> add(i, someint) | _ -> someint } in f" {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "[a : int, b : int, c : int | 'a] -> int" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "[a : int, b : int, c : int | 'a] -> int")
 
 	fnExpr := Func2("x", "y",
 		Match(
@@ -624,13 +437,7 @@ func TestVariantMatch(t *testing.T) {
 	if ast.ExprString(fnExpr) != "fn (x, y) -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y }" {
 		t.Fatalf("expr: %s", ast.ExprString(fnExpr))
 	}
-	ty, err = ctx.Infer(fnExpr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "([a : int, b : int, c : 'a], int) -> int" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, fnExpr, "([a : int, b : int, c : 'a], int) -> int")
 
 	// Call:
 
@@ -639,13 +446,7 @@ func TestVariantMatch(t *testing.T) {
 	if ast.ExprString(callExpr) != "(fn (x, y) -> match x { :a i -> add(i, i) | :b i -> add(i, i) | :c _ -> y })(:c somebool, someint)" {
 		t.Fatalf("expr: %s", ast.ExprString(callExpr))
 	}
-	ty, err = ctx.Infer(callExpr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "int" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, callExpr, "int")
 }
 
 func TestSafeStacks(t *testing.T) {
@@ -680,13 +481,7 @@ func TestSafeStacks(t *testing.T) {
 					Let("stack", Call(Var("pop"), Var("stack")), // i
 						Var("top"))))))
 
-	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "bool" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "bool")
 
 	expr = Let("stack", RecordEmpty(),
 		Let("stack", Call(Var("push"), Var("stack"), Var("i")), // i
@@ -696,13 +491,7 @@ func TestSafeStacks(t *testing.T) {
 						Let("stack", Call(Var("pop"), Var("stack")), // empty
 							Var("top")))))))
 
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if types.TypeString(ty) != "int" {
-		t.Fatalf("type: %s", types.TypeString(ty))
-	}
+	mustInfer(t, env, ctx, expr, "int")
 
 	expr = Let("stack", RecordEmpty(),
 		Let("stack", Call(Var("push"), Var("stack"), Var("i")), // i
@@ -712,7 +501,7 @@ func TestSafeStacks(t *testing.T) {
 						Let("stack", Call(Var("pop"), Var("stack")), // underflow
 							Var("stack")))))))
 
-	ty, err = ctx.Infer(expr, env)
+	_, err := ctx.Infer(expr, env)
 	if err == nil {
 		t.Fatalf("expected stack underflow error")
 	}
@@ -805,27 +594,13 @@ func TestHigherKindedTypes(t *testing.T) {
 	env.Declare("someintoption", TApp(option, TConst("int")))
 
 	var expr ast.Expr = Call(Var("fmap"), Var("itoa"), Var("someintoption"))
-	ty, err := ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString := types.TypeString(ty)
-	if typeString != "Option[string]" {
-		t.Fatalf("type: %s", typeString)
-	}
+	mustInfer(t, env, ctx, expr, "Option[string]")
 
 	expr = Call(Var("(>>=)"), Var("someintoption"), Func1("i", Call(Var("pure"), Call(Var("itoa"), Var("i")))))
 	if ast.ExprString(expr) != "(>>=)(someintoption, fn (i) -> pure(itoa(i)))" {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString = types.TypeString(ty)
-	if typeString != "Option[string]" {
-		t.Fatalf("type: %s", typeString)
-	}
+	mustInfer(t, env, ctx, expr, "Option[string]")
 
 	// fmap    :: (('a -> 'b),  'f['a]) ->  'f['b]
 	// ref_map :: (('a -> 'b), ref['a]) -> ref['b]
@@ -839,14 +614,7 @@ func TestHigherKindedTypes(t *testing.T) {
 	}
 	env.Declare("someintref", TRef(TConst("int")))
 	expr = Call(Var("fmap"), Var("itoa"), Var("someintref"))
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString = types.TypeString(ty)
-	if typeString != "ref[string]" {
-		t.Fatalf("type: %s", typeString)
-	}
+	mustInfer(t, env, ctx, expr, "ref[string]")
 
 	// detect invalid instances
 
@@ -952,14 +720,7 @@ func TestConstraints(t *testing.T) {
 	env.Declare("somea", TConst("A"))
 
 	call := Call(Var("fabc"), Var("somea"))
-	ty, err := ctx.Infer(call, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString := types.TypeString(ty)
-	if typeString != "A" {
-		t.Fatalf("type: %s", typeString)
-	}
+	mustInfer(t, env, ctx, call, "A")
 
 	// method-instance lookups
 
@@ -989,120 +750,57 @@ func TestConstraints(t *testing.T) {
 	// method/instance inference
 
 	var addWrapper ast.Expr = Func2("x", "y", Call(Var("+"), Var("x"), Var("y")))
-
-	ty, err = ctx.Infer(addWrapper, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString = types.TypeString(ty)
-	if typeString != "Add 'a => ('a, 'a) -> 'a" {
-		t.Fatalf("type: %s", typeString)
-	}
+	mustInfer(t, env, ctx, addWrapper, "Add 'a => ('a, 'a) -> 'a")
 
 	var expr ast.Expr = Call(addWrapper, Var("someint"), Var("someint"))
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tt, ok := ty.(*types.Const); !ok || tt.Name != "int" {
-		t.Fatalf("expected int return, found " + tt.Name)
-	}
+	mustInfer(t, env, ctx, expr, "int")
 
 	expr = Call(addWrapper, Var("someshort"), Var("someshort"))
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tt, ok := ty.(*types.Const); !ok || tt.Name != "short" {
-		t.Fatalf("expected short return, found " + tt.Name)
-	}
+	mustInfer(t, env, ctx, expr, "short")
 
 	expr = Call(addWrapper, Var("somefloat"), Var("somefloat"))
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tt, ok := ty.(*types.Const); !ok || tt.Name != "float" {
-		t.Fatalf("expected float return, found " + tt.Name)
-	}
+	mustInfer(t, env, ctx, expr, "float")
 
 	expr = Call(addWrapper, Var("someint"), Var("somefloat"))
-	ty, err = ctx.Infer(expr, env)
-	if err == nil {
+	if _, err := ctx.Infer(expr, env); err == nil {
 		t.Fatalf("expected constraint error")
 	}
 
 	expr = Call(addWrapper, Var("somebool"), Var("somebool"))
-	ty, err = ctx.Infer(expr, env)
-	if err == nil {
+	if _, err := ctx.Infer(expr, env); err == nil {
 		t.Fatalf("expected constraint error")
 	}
 
 	expr = Call(addWrapper, Var("someintvec"), Var("someintvec"))
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString = types.TypeString(ty)
-	if typeString != "vec[int]" {
-		t.Fatalf("type: %s", typeString)
-	}
+	mustInfer(t, env, ctx, expr, "vec[int]")
 
 	expr = Call(addWrapper, Var("somefloatvec"), Var("somefloatvec"))
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString = types.TypeString(ty)
-	if typeString != "vec[float]" {
-		t.Fatalf("type: %s", typeString)
-	}
+	mustInfer(t, env, ctx, expr, "vec[float]")
 
 	expr = Call(addWrapper, Var("someboolvec"), Var("someboolvec"))
-	ty, err = ctx.Infer(expr, env)
-	if err == nil {
+	if _, err := ctx.Infer(expr, env); err == nil {
 		t.Fatalf("expected constraint error")
 	}
 
 	expr = Call(Var("&"), Var("someint"), Var("someint"))
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tt, ok := ty.(*types.Const); !ok || tt.Name != "int" {
-		t.Fatalf("expected int return, found " + tt.Name)
-	}
+	mustInfer(t, env, ctx, expr, "int")
 
 	expr = Call(Var("&"), Var("someshort"), Var("someshort"))
-	ty, err = ctx.Infer(expr, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tt, ok := ty.(*types.Const); !ok || tt.Name != "short" {
-		t.Fatalf("expected short return, found " + tt.Name)
-	}
+	mustInfer(t, env, ctx, expr, "short")
 
 	expr = Call(Var("&"), Var("somebool"), Var("somebool"))
-	_, err = ctx.Infer(expr, env)
-	if err == nil {
+	if _, err := ctx.Infer(expr, env); err == nil {
 		t.Fatalf("expected constraint error")
 	}
 
 	expr = Call(Var("&"), Var("someint"), Var("someshort"))
 	_, err = ctx.Infer(expr, env)
-	if err == nil {
+	if _, err := ctx.Infer(expr, env); err == nil {
 		t.Fatalf("expected constraint error")
 	}
 
 	addWrapper = Func1("x", Call(Var("+"), Var("x"), Var("someint")))
-	ty, err = ctx.Infer(addWrapper, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	typeString = types.TypeString(ty)
-	if typeString != "int -> int" {
-		t.Fatalf("expected int -> int, found %s", typeString)
-	}
+	mustInfer(t, env, ctx, addWrapper, "int -> int")
 
 	// instance validation
 

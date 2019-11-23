@@ -28,7 +28,10 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-// See "Efficient Generalization with Levels" (Oleg Kiselyov) -- http://okmij.org/ftp/ML/generalization.html#levels
+// See "Efficient Generalization with Levels" (Oleg Kiselyov)
+// http://okmij.org/ftp/ML/generalization.html#levels
+//
+// This implementation follows the sound_eager algorithm.
 func (ctx *CommonContext) occursAdjustLevels(id, level int, t types.Type) error {
 	switch t := t.(type) {
 	case *types.Var:
@@ -144,42 +147,33 @@ func (ctx *CommonContext) applyConstraints(a *types.Var, b types.Type) error {
 			bv.SetConstraints(bConstraintsTmp)
 		}
 		for _, c := range aConstraints {
+			// Constraints which overlap or are subsumed will be eliminated:
 			bv.AddConstraint(c)
 		}
 		a.SetConstraints(nil)
 		return nil
 	}
-
-	// Eliminate instance constraints (find a matching instance for each type-class)
+	// Eliminate instance constraints (find a matching instance for each type-class):
 	for _, c := range aConstraints {
-		var matched *types.Instance
-		if ctx.LastInstanceMatch != nil {
-			if inst, ok := ctx.LastInstanceMatch[c.TypeClass.Id]; ok && ctx.CanUnify(b, ctx.Instantiate(a.Level(), inst.Param)) {
-				matched = inst
-			}
-		}
-		if matched == nil {
-			c.TypeClass.MatchInstance(b, func(inst *types.Instance) (found bool) {
-				if err := ctx.TryUnify(b, ctx.Instantiate(a.Level(), inst.Param)); err == nil {
-					matched = inst
-					return true
-				}
-				return false
-			})
-		}
-		if matched == nil {
+		// Overlapping instances are detected when they are declared. Overlap is only allowed
+		// between instances where one is a subclass of the other, and the search order ensures
+		// subclasses are visited first. The first matched instance is assumed to be the best
+		// match.
+		found := c.TypeClass.MatchInstance(b, func(inst *types.Instance) (found bool) {
+			err := ctx.TryUnify(b, ctx.Instantiate(a.Level(), inst.Param))
+			return err == nil
+		})
+		if !found {
 			return errors.New("No matching instance found for type-class " + c.TypeClass.Name)
 		}
-		if ctx.LastInstanceMatch == nil {
-			ctx.LastInstanceMatch = make(map[int]*types.Instance)
-		}
-		ctx.LastInstanceMatch[c.TypeClass.Id] = matched
 	}
 	return nil
 }
 
 func (ctx *CommonContext) Unify(a, b types.Type) error {
+	// Path compression:
 	a, b = types.RealType(a), types.RealType(b)
+
 	if a == b {
 		return nil
 	}
@@ -188,17 +182,12 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 
 	if a, ok := a.(*types.RecursiveLink); ok {
 		if b, ok := b.(*types.RecursiveLink); ok {
-			if a.Recursive.Id != b.Recursive.Id || a.Index != b.Index {
+			if !a.Recursive.Matches(b.Recursive) || a.Index != b.Index {
 				return errors.New("Failed to unify recursive type links")
 			}
-			as, bs := a.Recursive.Types, b.Recursive.Types
-			// All unifiable type-variables should occur within the constructor and type-parameters.
-			// The underlying type should be ignored (to prevent possible reassignment of underlying types).
-			var appA, appB types.App
-			for i, t := range as {
-				appA.Const, appA.Args = t.Const, t.Args
-				appB.Const, appB.Args = bs[i].Const, bs[i].Args
-				if err := ctx.Unify(&appA, &appB); err != nil {
+			// All unifiable type-variables should occur within the recursive group's type-parameters.
+			for i, tv := range a.Recursive.Params {
+				if err := ctx.Unify(tv, b.Recursive.Params[i]); err != nil {
 					return err
 				}
 			}
@@ -392,6 +381,10 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 //       [0: b, 1: c, 2: d] ==> extra types in b: []
 func (ctx *CommonContext) unifyLists(a, b types.TypeList) (extraA, extraB types.TypeList, err error) {
 	la, lb := a.Len(), b.Len()
+	// common case for unscoped labels:
+	if la == 1 && lb == 1 {
+		return types.EmptyTypeList, types.EmptyTypeList, ctx.Unify(a.Get(0), b.Get(0))
+	}
 	n := la
 	if lb > la {
 		extraA, extraB = types.EmptyTypeList, b.Slice(0, lb-la)
