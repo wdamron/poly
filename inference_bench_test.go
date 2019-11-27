@@ -32,7 +32,7 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-func BenchmarkMutuallyRecursiveLet(b *testing.B) { // ~14500 ns/op
+func BenchmarkMutuallyRecursiveLet(b *testing.B) { // ~10500 ns/op
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
@@ -72,7 +72,7 @@ func BenchmarkMutuallyRecursiveLet(b *testing.B) { // ~14500 ns/op
 	}
 }
 
-func BenchmarkRecursiveLet(b *testing.B) { // ~3500 ns/op
+func BenchmarkRecursiveLet(b *testing.B) { // ~1900 ns/op
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
@@ -104,7 +104,7 @@ func BenchmarkRecursiveLet(b *testing.B) { // ~3500 ns/op
 	}
 }
 
-func BenchmarkInstanceLookups(t *testing.B) { // ~5800 ns/op
+func BenchmarkInstanceLookups(t *testing.B) { // ~5100 ns/op
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 

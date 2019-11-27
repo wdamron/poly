@@ -295,6 +295,12 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 	switch a := a.(type) {
 	// Var and RecursiveLink are handled above
 
+	case *types.Unit:
+		if _, ok := b.(*types.Unit); ok {
+			return nil
+		}
+		return errors.New("Failed to unify unit with " + types.TypeName(b))
+
 	case *types.Const:
 		if b, ok := b.(*types.Const); ok {
 			if a.Name == b.Name {
@@ -312,18 +318,18 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 		}
 
 	case *types.App:
-		b, ok := b.(*types.App)
+		bapp, ok := b.(*types.App)
 		if !ok {
-			return errors.New("Failed to unify type-application with " + b.TypeName())
+			return errors.New("Failed to unify type-application with " + types.TypeName(b))
 		}
-		if err := ctx.Unify(a.Const, b.Const); err != nil {
+		if err := ctx.Unify(a.Const, bapp.Const); err != nil {
 			return err
 		}
-		if len(a.Args) != len(b.Args) {
+		if len(a.Args) != len(bapp.Args) {
 			return errors.New("Cannot unify type-applications with differing arity")
 		}
 		for i := range a.Args {
-			if err := ctx.Unify(a.Args[i], b.Args[i]); err != nil {
+			if err := ctx.Unify(a.Args[i], bapp.Args[i]); err != nil {
 				return err
 			}
 		}
@@ -335,7 +341,7 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 	case *types.Arrow:
 		b, ok := b.(*types.Arrow)
 		if !ok {
-			return errors.New("Failed to unify arrow with type " + b.TypeName())
+			return errors.New("Failed to unify arrow with type " + types.TypeName(b))
 		}
 		if len(a.Args) != len(b.Args) {
 			return errors.New("Cannot unify arrows with differing arity")

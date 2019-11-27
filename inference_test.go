@@ -42,6 +42,13 @@ func mustInfer(t *testing.T, env *TypeEnv, ctx *InferenceContext, expr ast.Expr,
 	}
 }
 
+func TestUnit(t *testing.T) {
+	ty := TArrow1(TConst("int"), TUnit())
+	if types.TypeString(ty) != "int -> ()" {
+		t.Fatalf("type: %s", types.TypeString(ty))
+	}
+}
+
 func TestLiterals(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
@@ -57,67 +64,6 @@ func TestLiterals(t *testing.T) {
 	mustInfer(t, env, ctx, Let("vec", xvec, Var("vec")), "vec[int]")
 }
 
-func TestPipes(t *testing.T) {
-	env := NewTypeEnv(nil)
-	ctx := NewContext()
-
-	env.Declare("x", TConst("int"))
-	env.Declare("id", TArrow1(TConst("int"), TConst("int")))
-	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
-	env.Declare("itoa", TArrow1(TConst("int"), TConst("string")))
-
-	expr := Pipe("$", Var("x"),
-		Call(Var("itoa"), Var("$")))
-
-	mustInfer(t, env, ctx, expr, "string")
-
-	expr = Pipe("$", Var("x"),
-		Call(Var("id"), Var("$")),
-		Call(Var("itoa"), Var("$")))
-
-	mustInfer(t, env, ctx, expr, "string")
-
-	expr = Pipe("$", Var("x"),
-		Call(Var("id"), Var("$")),
-		Call(Var("add"), Var("$"), Var("$")),
-		Call(Var("itoa"), Var("$")))
-
-	if ast.ExprString(expr) != "pipe $ = x |> id($) |> add($, $) |> itoa($)" {
-		t.Fatalf("expr: %s", ast.ExprString(expr))
-	}
-	mustInfer(t, env, ctx, expr, "string")
-}
-
-func TestControlFlow(t *testing.T) {
-	env := NewTypeEnv(nil)
-	ctx := NewContext()
-
-	env.Declare("zero", TConst("int"))
-	env.Declare("inc", TArrow1(TConst("int"), TConst("int")))
-	env.Declare("dec", TArrow1(TConst("int"), TConst("int")))
-	env.Declare("cmp", TArrow2(TConst("int"), TConst("int"), TConst("bool")))
-
-	cfg := ast.NewControlFlow("x")
-
-	cfg.SetEntry(
-		Call(Var("dec"), Var("x")),
-		Call(Var("cmp"), Var("x"), Var("zero")))
-
-	cfg.SetReturn(Var("x"))
-
-	cfg.AddJump(cfg.Entry, cfg.Return)
-
-	body := cfg.AddBlock(
-		Call(Var("inc"), Var("x")),
-		Call(Var("cmp"), Var("x"), Var("zero")))
-
-	cfg.AddJump(cfg.Entry, body)
-	cfg.AddJump(body, body)
-	cfg.AddJump(body, cfg.Return)
-
-	mustInfer(t, env, ctx, cfg, "int")
-}
-
 func TestSizes(t *testing.T) {
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
@@ -128,6 +74,22 @@ func TestSizes(t *testing.T) {
 	env.Declare("ys", TApp(TConst("array"), TConst("int"), TSize(16)))
 	env.Declare("zs", TApp(TConst("array"), TConst("int"), TConst("foo")))
 	env.Declare("add", TArrow2(intarray, intarray, intarray))
+
+	sharedSize := env.NewGenericSize()
+	env.Declare("get", TArrow2(
+		TApp(TConst("array"), TConst("int"), sharedSize),
+		TApp(TConst("index"), sharedSize),
+		TConst("int")))
+
+	env.Declare("xi", TApp(TConst("index"), TSize(8)))
+	env.Declare("yi", TApp(TConst("index"), TSize(16)))
+
+	mustInfer(t, env, ctx, Var("get"), "size 'a => (array[int, 'a], index['a]) -> int")
+	mustInfer(t, env, ctx, Call(Var("get"), Var("xs"), Var("xi")), "int")
+	mustInfer(t, env, ctx, Call(Var("get"), Var("ys"), Var("yi")), "int")
+	if _, err := ctx.Infer(Call(Var("get"), Var("xs"), Var("yi")), env); err == nil {
+		t.Fatalf("Expected size-mismatch error")
+	}
 
 	mustInfer(t, env, ctx, Var("add"), "size 'a => (array[int, 'a], array[int, 'a]) -> array[int, 'a]")
 	mustInfer(t, env, ctx, Call(Var("add"), Var("xs"), Var("xs")), "array[int, 8]")
@@ -207,6 +169,76 @@ func TestAliases(t *testing.T) {
 	mustInfer(t, env, ctx, Call(Var("append"), Var("someints"), Var("someints")), "slice[int]")
 	mustInfer(t, env, ctx, Call(Var("append"), Var("someints"), Var("someints2")), "slice[int]")
 	mustInfer(t, env, ctx, Call(Var("append"), Var("someints2"), Var("someints3")), "slice[int]")
+}
+
+func TestPipes(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	env.Declare("x", TConst("int"))
+	env.Declare("id", TArrow1(TConst("int"), TConst("int")))
+	env.Declare("add", TArrow2(TConst("int"), TConst("int"), TConst("int")))
+	env.Declare("itoa", TArrow1(TConst("int"), TConst("string")))
+
+	expr := Pipe("$", Var("x"),
+		Call(Var("itoa"), Var("$")))
+
+	mustInfer(t, env, ctx, expr, "string")
+
+	expr = Pipe("$", Var("x"),
+		Call(Var("id"), Var("$")),
+		Call(Var("itoa"), Var("$")))
+
+	mustInfer(t, env, ctx, expr, "string")
+
+	expr = Pipe("$", Var("x"),
+		Call(Var("id"), Var("$")),
+		Call(Var("add"), Var("$"), Var("$")),
+		Call(Var("itoa"), Var("$")))
+
+	if ast.ExprString(expr) != "pipe $ = x |> id($) |> add($, $) |> itoa($)" {
+		t.Fatalf("expr: %s", ast.ExprString(expr))
+	}
+	mustInfer(t, env, ctx, expr, "string")
+}
+
+func TestControlFlow(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	env.Declare("n", TConst("int"))
+	env.Declare("zero", TConst("int"))
+	env.Declare("dec", TArrow1(TConst("int"), TConst("int")))
+	env.Declare("cmp", TArrow2(TConst("int"), TConst("int"), TConst("bool")))
+
+	cfg := ControlFlow("strange_loop", "local_x")
+
+	cfg.SetEntry(
+		DerefAssign(Var("local_x"), Call(Var("dec"), Var("n"))),
+		Call(Var("cmp"), Deref(Var("local_x")), Var("zero")))
+
+	cfg.SetReturn(Deref(Var("local_x")))
+
+	body := cfg.AddBlock(
+		DerefAssign(Var("local_x"), Call(Var("dec"), Deref(Var("local_x")))),
+		Call(Var("cmp"), Deref(Var("local_x")), Var("zero")))
+
+	cfg.AddJump(cfg.Entry, cfg.Return)
+	cfg.AddJump(cfg.Entry, body)
+	cfg.AddJump(body, body)
+	cfg.AddJump(body, cfg.Return)
+
+	mustInfer(t, env, ctx, cfg, "int")
+
+	expect := "strange_loop(local_x) {" +
+		"entry : {*local_x = dec(n); cmp(*local_x, zero)}, " +
+		"return : *local_x, " +
+		"L0 : {*local_x = dec(*local_x); cmp(*local_x, zero)}" +
+		"} in {entry -> [return, L0], L0 -> [return, L0]}"
+
+	if ast.ExprString(cfg) != expect {
+		t.Fatalf("expr: %s", ast.ExprString(cfg))
+	}
 }
 
 func TestRecursiveTypes(t *testing.T) {
@@ -504,15 +536,18 @@ func TestSafeStacks(t *testing.T) {
 	env.Declare("i", TConst("int"))
 	env.Declare("b", TConst("bool"))
 
+	// push(i), push(b), peek, pop, pop -> b
 	expr := Let("stack", RecordEmpty(),
 		Let("stack", Call(Var("push"), Var("stack"), Var("i")), // i
 			Let("stack", Call(Var("push"), Var("stack"), Var("b")), // i b
 				Let("top", Call(Var("peek"), Var("stack")), // i b
-					Let("stack", Call(Var("pop"), Var("stack")), // i
-						Var("top"))))))
+					Let("stack", Call(Var("pop"), Var("stack")), // i,
+						Let("stack", Call(Var("pop"), Var("stack")), // empty
+							Var("top")))))))
 
 	mustInfer(t, env, ctx, expr, "bool")
 
+	// push(i), push(b), pop, peek, pop -> i
 	expr = Let("stack", RecordEmpty(),
 		Let("stack", Call(Var("push"), Var("stack"), Var("i")), // i
 			Let("stack", Call(Var("push"), Var("stack"), Var("b")), // i b
@@ -523,6 +558,7 @@ func TestSafeStacks(t *testing.T) {
 
 	mustInfer(t, env, ctx, expr, "int")
 
+	// push(i), push(b), pop, pop, pop -> underflow
 	expr = Let("stack", RecordEmpty(),
 		Let("stack", Call(Var("push"), Var("stack"), Var("i")), // i
 			Let("stack", Call(Var("push"), Var("stack"), Var("b")), // i b

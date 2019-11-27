@@ -68,6 +68,52 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		}
 		return t, nil
 
+	case *ast.Deref:
+		t, err := ti.infer(env, level, e.Ref)
+		if err != nil {
+			return nil, err
+		}
+		tv := ti.common.VarTracker.New(level)
+		tv.SetWeak()
+		ref := types.NewRef(tv)
+		ref.Flags |= types.ContainsRefs | types.WeaklyPolymorphic
+		if err := ti.common.Unify(t, ref); err != nil {
+			ti.invalid, ti.err = e, err
+			return t, err
+		}
+		t = types.RealType(tv)
+		if ti.annotate {
+			e.SetType(t)
+		}
+		return t, nil
+
+	case *ast.DerefAssign:
+		refType, err := ti.infer(env, level, e.Ref)
+		if err != nil {
+			return refType, err
+		}
+		tv := ti.common.VarTracker.New(level)
+		tv.SetWeak()
+		ref := types.NewRef(tv)
+		ref.Flags |= types.ContainsRefs | types.WeaklyPolymorphic
+		if err := ti.common.Unify(ref, refType); err != nil {
+			ti.invalid, ti.err = e, err
+			return refType, err
+		}
+		valType, err := ti.infer(env, level, e.Value)
+		if err != nil {
+			return refType, err
+		}
+		if err := ti.common.Unify(tv, valType); err != nil {
+			ti.invalid, ti.err = e, err
+			return refType, err
+		}
+		refType = types.RealType(refType)
+		if ti.annotate {
+			e.SetType(refType)
+		}
+		return refType, nil
+
 	case *ast.Pipe:
 		// Inline equivalent to inferring as nested (non-recursive) let-bindings:
 		t, err := ti.infer(env, level+1, e.Source)
@@ -95,13 +141,15 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		return t, err
 
 	case *ast.ControlFlow:
-		// Evaluate all sub-expressions in a new scope with the local variables bound to weak type-variables:
+		// Evaluate all sub-expressions in a new scope with local variables bound to mutable references:
 		stashed := 0
 		for _, name := range e.Locals {
 			stashed += ti.common.Stash(env, name)
 			tv := ti.common.VarTracker.New(level)
 			tv.SetWeak()
-			env.Assign(name, tv)
+			ref := types.NewRef(tv)
+			ref.Flags |= types.ContainsRefs | types.WeaklyPolymorphic
+			env.Assign(name, ref)
 		}
 		for _, sub := range e.Entry.Sequence {
 			if _, err := ti.infer(env, level+1, sub); err != nil {

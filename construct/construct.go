@@ -29,6 +29,9 @@ import (
 
 // Types
 
+// Unit type: `()`
+func TUnit() *types.Unit { return types.NewUnit() }
+
 // Create a new type-variable with the given id and binding-level.
 func TVar(id, level int) *types.Var {
 	return types.NewVar(id, level)
@@ -134,6 +137,16 @@ func Var(name string) *ast.Var {
 	return &ast.Var{Name: name}
 }
 
+// Dereference: `*x`
+func Deref(ref ast.Expr) *ast.Deref {
+	return &ast.Deref{Ref: ref}
+}
+
+// Dereference and assign: `*x = y`
+func DerefAssign(ref ast.Expr, value ast.Expr) *ast.DerefAssign {
+	return &ast.DerefAssign{Ref: ref, Value: value}
+}
+
 // Application: `f(x)`
 func Call(f ast.Expr, args ...ast.Expr) *ast.Call {
 	return &ast.Call{Func: f, Args: args}
@@ -157,6 +170,11 @@ func Func2(arg1, arg2 string, body ast.Expr) *ast.Func {
 // Abstraction: `fn (x, y, z) -> x`
 func Func3(arg1, arg2, arg3 string, body ast.Expr) *ast.Func {
 	return &ast.Func{ArgNames: []string{arg1, arg2, arg3}, Body: body}
+}
+
+// Control flow graph
+func ControlFlow(name string, locals ...string) *ast.ControlFlow {
+	return ast.NewControlFlow(name, locals...)
 }
 
 // Pipeline: `pipe $ = xs |> fmap($, fn (x) -> to_y(x)) |> fmap($, fn (y) -> to_z(y))`

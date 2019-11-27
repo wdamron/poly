@@ -27,6 +27,7 @@ import (
 )
 
 var (
+	_ Type = (*Unit)(nil)
 	_ Type = (*Var)(nil)
 	_ Type = (*Const)(nil)
 	_ Type = Size(0)
@@ -74,6 +75,13 @@ const (
 	// TypeFlags for a composite type which has already been generalized and should not be re-generalized.
 	NeedsGeneralization = 8
 )
+
+type Unit struct {
+}
+
+var UnitPointer *Unit = &Unit{}
+
+func NewUnit() *Unit { return UnitPointer }
 
 // Mutable references are applications of RefType (a mutable reference-type) with a single referenced type-parameter.
 var RefType = &Const{"ref"}
@@ -163,6 +171,9 @@ func TypeName(t Type) string {
 	return t.TypeName()
 }
 
+// "Unit"
+func (t *Unit) TypeName() string { return "Unit" }
+
 // "Var"
 func (t *Var) TypeName() string { return "Var" }
 
@@ -192,6 +203,12 @@ func (t *RowExtend) TypeName() string { return "RowExtend" }
 
 // "RowEmpty"
 func (t *RowEmpty) TypeName() string { return "RowEmpty" }
+
+// Unit is never generic.
+func (t *Unit) IsGeneric() bool { return false }
+
+// Unit never contains mutable reference-types.
+func (t *Unit) HasRefs() bool { return false }
 
 // Check if t is a generic type-variable.
 func (t *Var) IsGeneric() bool {

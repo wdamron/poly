@@ -30,6 +30,12 @@ func CopyExpr(e Expr) Expr {
 	case *Var:
 		return &Var{e.Name, e.inferred}
 
+	case *Deref:
+		return &Deref{e.Ref, e.inferred}
+
+	case *DerefAssign:
+		return &DerefAssign{e.Ref, e.Value, e.inferred}
+
 	case *Call:
 		args := make([]Expr, len(e.Args))
 		for i, arg := range e.Args {
@@ -94,7 +100,7 @@ func CopyExpr(e Expr) Expr {
 		return &Match{CopyExpr(e.Value), cases, defaultCase, e.inferred}
 
 	case *ControlFlow:
-		next := NewControlFlow(e.Locals...)
+		next := NewControlFlow(e.Name, e.Locals...)
 		blocks := make([]Block, len(e.Blocks))
 		for i, b := range e.Blocks {
 			blocks[i].Sequence = make([]Expr, len(b.Sequence))
@@ -103,6 +109,7 @@ func CopyExpr(e Expr) Expr {
 			}
 			blocks[i].Index = b.Index
 		}
+		next.Blocks = blocks
 		next.Entry.Sequence = make([]Expr, len(e.Entry.Sequence))
 		for i, sub := range e.Entry.Sequence {
 			next.Entry.Sequence[i] = CopyExpr(sub)

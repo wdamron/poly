@@ -70,7 +70,7 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 	case *types.RecursiveLink:
 		rec := t.Recursive
 		next := &types.Recursive{
-			Parent:  rec,
+			Source:  rec,
 			Params:  make([]*types.Var, len(rec.Params)),
 			Types:   make([]*types.App, 0, len(rec.Types)), // types are added during Bind
 			Names:   rec.Names,

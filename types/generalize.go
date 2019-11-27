@@ -47,6 +47,9 @@ func generalizeOpts(level int, t Type, weak, forceGeneralize bool) Type {
 
 func visitTypeVars(level int, t Type, weak, forceGeneralize bool, ngeneric, nref *int) {
 	switch t := t.(type) {
+	case *Unit:
+		return
+
 	case *Var:
 		switch {
 		case t.IsLinkVar():

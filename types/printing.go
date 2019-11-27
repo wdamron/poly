@@ -106,16 +106,47 @@ type typePrinter struct {
 	sb      strings.Builder
 }
 
-func (p *typePrinter) nextName() string {
-	i := len(p.idNames)
+var _names [128]string
+var _unboundNames [128]string
+
+func init() {
+	for i := range _names {
+		if i >= 26 {
+			_names[i] = "'" + string(byte(97+i%26)) + strconv.Itoa(i/26)
+		}
+		_names[i] = "'" + string(byte(97+i%26))
+	}
+	for i := range _unboundNames {
+		_unboundNames[i] = "'_" + strconv.Itoa(i)
+	}
+}
+
+func getVarName(i int) string {
+	if i < len(_names) {
+		return _names[i]
+	}
 	if i >= 26 {
-		return string(byte(97+i%26)) + strconv.Itoa(i/26)
+		return "'" + string(byte(97+i%26)) + strconv.Itoa(i/26)
 	}
 	return "'" + string(byte(97+i%26))
 }
 
+func getUnboundVarName(i int) string {
+	if i < len(_unboundNames) {
+		return _unboundNames[i]
+	}
+	return "'_" + strconv.Itoa(i)
+}
+
+func (p *typePrinter) nextName() string {
+	return getVarName(len(p.idNames))
+}
+
 func typeString(p *typePrinter, simple bool, t Type) {
 	switch t := t.(type) {
+	case *Unit:
+		p.sb.WriteString("()")
+
 	case *Const:
 		p.sb.WriteString(t.Name)
 
@@ -131,7 +162,7 @@ func typeString(p *typePrinter, simple bool, t Type) {
 				p.sb.WriteString(name)
 				return
 			}
-			name := "'_" + strconv.Itoa(t.Id())
+			name := getUnboundVarName(t.Id())
 			p.sb.WriteString(name)
 			p.idNames[t.Id()] = name
 

@@ -37,6 +37,9 @@ type Expr interface {
 var (
 	_ Expr = (*Literal)(nil)
 	_ Expr = (*Var)(nil)
+	_ Expr = (*Deref)(nil)
+	_ Expr = (*DerefAssign)(nil)
+	_ Expr = (*ControlFlow)(nil)
 	_ Expr = (*Pipe)(nil)
 	_ Expr = (*Call)(nil)
 	_ Expr = (*Func)(nil)
@@ -85,6 +88,37 @@ func (e *Var) Type() types.Type { return types.RealType(e.inferred) }
 
 // Assign a type to e. Type assignments should occur indirectly, during inference.
 func (e *Var) SetType(t types.Type) { e.inferred = t }
+
+// Dereference: `*x`
+type Deref struct {
+	Ref      Expr
+	inferred types.Type
+}
+
+// "Deref"
+func (e *Deref) ExprName() string { return "Deref" }
+
+// Get the inferred (or assigned) type of e.
+func (e *Deref) Type() types.Type { return types.RealType(e.inferred) }
+
+// Assign a type to e. Type assignments should occur indirectly, during inference.
+func (e *Deref) SetType(t types.Type) { e.inferred = t }
+
+// Dereference and assign: `*x = y`
+type DerefAssign struct {
+	Ref      Expr
+	Value    Expr
+	inferred types.Type
+}
+
+// "DerefAssign"
+func (e *DerefAssign) ExprName() string { return "DerefAssign" }
+
+// Get the inferred (or assigned) type of e.
+func (e *DerefAssign) Type() types.Type { return types.RealType(e.inferred) }
+
+// Assign a type to e. Type assignments should occur indirectly, during inference.
+func (e *DerefAssign) SetType(t types.Type) { e.inferred = t }
 
 // Application: `f(x)`
 type Call struct {

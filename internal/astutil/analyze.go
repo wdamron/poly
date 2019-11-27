@@ -38,7 +38,7 @@ import (
 //
 //   The initial dependency analysis should ignore references to variables that have an explicit type signature.
 type Analysis struct {
-	Scopes      map[string]int // map from variable to let-group number (or -1 for function-bound variables)
+	Scopes      map[string]int // map from variable to let-group number (or -1 for variables not bound by let-groups)
 	ScopeStash  []StashedScope // shadowed variable-scope mappings
 	Graphs      []graph        // indexed by let-group number
 	CurrentVert []int          // indexed by let-group number
@@ -146,6 +146,61 @@ func (a *Analysis) analyzeExpr(expr ast.Expr) error {
 				graph.addEdge(graph.verts[expr.Name], a.CurrentVert[groupNum])
 			}
 		}
+
+	case *ast.Deref:
+		if err := a.analyzeExpr(expr.Ref); err != nil {
+			return err
+		}
+
+	case *ast.DerefAssign:
+		if err := a.analyzeExpr(expr.Ref); err != nil {
+			return err
+		}
+		if err := a.analyzeExpr(expr.Value); err != nil {
+			return err
+		}
+
+	case *ast.Pipe:
+		if err := a.analyzeExpr(expr.Source); err != nil {
+			return err
+		}
+		stashed := a.stash(expr.As)
+		a.Scopes[expr.As] = -1
+		for _, sub := range expr.Sequence {
+			if err := a.analyzeExpr(sub); err != nil {
+				return err
+			}
+		}
+		delete(a.Scopes, expr.As)
+		a.unstash(stashed)
+
+	case *ast.ControlFlow:
+		stashed := 0
+		for _, local := range expr.Locals {
+			stashed += a.stash(local)
+			a.Scopes[local] = -1
+		}
+		for _, sub := range expr.Entry.Sequence {
+			if err := a.analyzeExpr(sub); err != nil {
+				return err
+			}
+		}
+		for _, sub := range expr.Return.Sequence {
+			if err := a.analyzeExpr(sub); err != nil {
+				return err
+			}
+		}
+		for _, block := range expr.Blocks {
+			for _, sub := range block.Sequence {
+				if err := a.analyzeExpr(sub); err != nil {
+					return err
+				}
+			}
+		}
+		for _, local := range expr.Locals {
+			delete(a.Scopes, local)
+		}
+		a.unstash(stashed)
 
 	case *ast.Call:
 		if err := a.analyzeExpr(expr.Func); err != nil {
@@ -296,6 +351,12 @@ func (a *Analysis) analyzeExpr(expr ast.Expr) error {
 			delete(a.Scopes, c.Var)
 			a.unstash(stashed)
 		}
+
+	case nil:
+		return errors.New("Failed to analyze nil expression")
+
+	default:
+		return errors.New("Failed to analyze " + expr.ExprName() + " expression")
 	}
 
 	return nil

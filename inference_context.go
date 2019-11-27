@@ -90,7 +90,7 @@ func (ti *InferenceContext) InvalidExpr() ast.Expr { return ti.invalid }
 // across threads, create a new type-environment for each thread which inherits from the
 // shared environment.
 func (ti *InferenceContext) Infer(expr ast.Expr, env *TypeEnv) (types.Type, error) {
-	nocopy := false
+	nocopy := true
 	_, t, err := ti.inferRoot(expr, env, nocopy)
 	return t, err
 }

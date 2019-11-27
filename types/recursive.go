@@ -44,8 +44,8 @@ var _ Type = (*RecursiveLink)(nil)
 // where we denote by τ[σ1,...,σn/α1,...,αn] the simultaneous capture-avoiding substitution
 // of σ1,...,σn for α1,...,αn in τ.
 type Recursive struct {
-	// Parent is a recursive type which this type instantiates, or nil.
-	Parent *Recursive
+	// Source is a recursive type which this type instantiates, or nil.
+	Source *Recursive
 	// Params are type-variables used by the recursive type(s).
 	Params []*Var
 	// Types is an indexed slice containing one or more aliased types.
@@ -84,13 +84,13 @@ func (r *Recursive) GetType(name string) *App {
 	return nil
 }
 
-// Check if r is declared as an instance of parent.
-func (r *Recursive) IsInstanceOf(parent *Recursive) bool {
-	if r == parent {
+// Check if r is declared as an instance of source.
+func (r *Recursive) IsInstanceOf(source *Recursive) bool {
+	if r == source {
 		return true
 	}
-	for parent := r.Parent; parent != nil; parent = parent.Parent {
-		if r == parent {
+	for source := r.Source; source != nil; source = source.Source {
+		if r == source {
 			return true
 		}
 	}
@@ -100,9 +100,9 @@ func (r *Recursive) IsInstanceOf(parent *Recursive) bool {
 // Check if r and other are instantiated from the same root.
 func (r *Recursive) Matches(other *Recursive) bool {
 	var rootA, rootB *Recursive
-	for rootA = r; rootA != nil; rootA = rootA.Parent {
+	for rootA = r; rootA != nil; rootA = rootA.Source {
 	}
-	for rootB = other; rootB != nil; rootB = rootB.Parent {
+	for rootB = other; rootB != nil; rootB = rootB.Source {
 	}
 	return rootA == rootB
 }
@@ -119,7 +119,7 @@ func (r *Recursive) NeedsGeneralization() bool { return r.Flags&NeedsGeneralizat
 // Create an instance of r with params bound as its type parameters.
 func (r *Recursive) WithParams(env TypeEnv, params ...Type) *Recursive {
 	next := &Recursive{
-		Parent:  r,
+		Source:  r,
 		Params:  make([]*Var, len(r.Params)),
 		Types:   make([]*App, 0, len(r.Types)),
 		Names:   r.Names,
