@@ -61,7 +61,7 @@ func CopyExpr(e Expr) Expr {
 		for i, v := range e.Vars {
 			vars[i] = LetBinding{v.Var, CopyExpr(v.Value)}
 		}
-		return &LetGroup{vars, CopyExpr(e.Body)}
+		return &LetGroup{vars, CopyExpr(e.Body), e.sccs}
 
 	case *RecordSelect:
 		return &RecordSelect{CopyExpr(e.Record), e.Label, e.inferred}

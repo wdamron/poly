@@ -53,12 +53,12 @@ func TRecursiveLink(rec *types.Recursive, name string) *types.RecursiveLink {
 }
 
 // Type application: `list[int]`
-func TApp(constructor types.Type, args ...types.Type) *types.App {
-	return &types.App{Const: constructor, Args: args}
+func TApp(constructor types.Type, params ...types.Type) *types.App {
+	return &types.App{Const: constructor, Params: params}
 }
 
 func TAlias(app *types.App, underlying types.Type) *types.App {
-	return &types.App{Const: app.Const, Args: app.Args, Underlying: underlying}
+	return &types.App{Const: app.Const, Params: app.Params, Underlying: underlying}
 }
 
 func TRef(deref types.Type) *types.App {
@@ -113,12 +113,9 @@ func TRowExtend(row types.Type, labels types.TypeMap) *types.RowExtend {
 	return &types.RowExtend{Row: row, Labels: labels}
 }
 
+// Create a TypeMap with unscoped labels.
 func TypeMap(m map[string]types.Type) types.TypeMap {
-	b := types.NewTypeMapBuilder()
-	for label, t := range m {
-		b.Set(label, types.SingletonTypeList(t))
-	}
-	return b.Build()
+	return types.NewFlatTypeMap(m)
 }
 
 // Empty row: `<>`

@@ -300,35 +300,6 @@ func printBlockLabel(sb *strings.Builder, index int) {
 	}
 }
 
-func sortJumps(jumps []Jump) []Jump {
-	less := func(i, j int) bool {
-		return jumps[i].From < jumps[j].From || (jumps[i].From == jumps[j].From && jumps[i].To < jumps[j].To)
-	}
-	if len(jumps) == 1 {
-		return jumps
-	}
-	if len(jumps) == 2 {
-		lt, gt := less(0, 1), less(1, 0)
-		if !(lt || !gt) { // not less than or equal
-			return []Jump{jumps[1], jumps[0]}
-		}
-		return jumps
-	}
-	sorted := true
-	for i := range jumps[:len(jumps)-1] {
-		lt, gt := less(i, i+1), less(i+1, i)
-		if !(lt || !gt) { // not less than or equal
-			sorted = false
-			break
-		}
-	}
-	if !sorted {
-		jumps = append([]Jump{}, jumps...)
-		sort.Slice(jumps, less)
-	}
-	return jumps
-}
-
 func controlFlow(sb *strings.Builder, e *ControlFlow) {
 	sb.WriteString(e.Name)
 	sb.WriteByte('(')
@@ -364,7 +335,7 @@ func controlFlow(sb *strings.Builder, e *ControlFlow) {
 	}
 	sb.WriteString("} in {")
 	if len(e.Jumps) != 0 {
-		jumps := sortJumps(e.Jumps)
+		jumps := SortJumps(e.Jumps)
 		lastFrom := ControlFlowEntryIndex - 1
 		for i, j := range jumps {
 			if j.From == lastFrom {

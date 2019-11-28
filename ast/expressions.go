@@ -20,19 +20,29 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// The following expressions are supported:
+//
+//   Literal:         semi-opaque literal value
+//   Var:             variable
+//   Deref:           dereference
+//   DerefAssign:     dereference and assign
+//   ControlFlow:     control-flow graph
+//   Pipe:            pipeline
+//   Call:            function call
+//   Func:            function abstraction
+//   Let:             let-binding
+//   LetGroup:        grouped let-bindings
+//   RecordSelect:    selecting (scoped) value of label
+//   RecordExtend:    extending record
+//   RecordRestrict:  deleting (scoped) label
+//   RecordEmpty:     empty record
+//   Variant:         tagged (ad-hoc) variant
+//   Match:           variant-matching switch
 package ast
 
 import (
 	"github.com/wdamron/poly/types"
 )
-
-// Expr is the base for all expressions.
-type Expr interface {
-	// Name of the syntax-type of the expression.
-	ExprName() string
-	// Type returns an inferred type of an expression. Expression types are only available after type-inference.
-	Type() types.Type
-}
 
 var (
 	_ Expr = (*Literal)(nil)
@@ -52,6 +62,33 @@ var (
 	_ Expr = (*Variant)(nil)
 	_ Expr = (*Match)(nil)
 )
+
+// Expr is the base for all expressions.
+//
+// The following expressions are supported:
+//
+//   Literal:         semi-opaque literal value
+//   Var:             variable
+//   Deref:           dereference
+//   DerefAssign:     dereference and assign
+//   ControlFlow:     control-flow graph
+//   Pipe:            pipeline
+//   Call:            function call
+//   Func:            function abstraction
+//   Let:             let-binding
+//   LetGroup:        grouped let-bindings
+//   RecordSelect:    selecting (scoped) value of label
+//   RecordExtend:    extending record
+//   RecordRestrict:  deleting (scoped) label
+//   RecordEmpty:     empty record
+//   Variant:         tagged (ad-hoc) variant
+//   Match:           variant-matching switch
+type Expr interface {
+	// Name of the syntax-type of the expression.
+	ExprName() string
+	// Type returns an inferred type of an expression. Expression types are only available after type-inference.
+	Type() types.Type
+}
 
 // Semi-opaque literal value
 type Literal struct {
@@ -143,7 +180,7 @@ func (e *Call) FuncType() *types.Arrow { return e.inferredFunc }
 // Assign the function/method called in e. Type assignments should occur indirectly, during inference.
 func (e *Call) SetFuncType(t *types.Arrow) { e.inferredFunc = t }
 
-// Abstraction: `fn (x, y) -> x`
+// Function abstraction: `fn (x, y) -> x`
 type Func struct {
 	ArgNames []string
 	Body     Expr
@@ -182,6 +219,7 @@ func (e *Let) Type() types.Type { return e.Body.Type() }
 type LetGroup struct {
 	Vars []LetBinding
 	Body Expr
+	sccs [][]LetBinding
 }
 
 // "LetGroup"
@@ -189,6 +227,19 @@ func (e *LetGroup) ExprName() string { return "LetGroup" }
 
 // Get the inferred (or assigned) type of e.
 func (e *LetGroup) Type() types.Type { return e.Body.Type() }
+
+// Get the strongly connected components inferred for e, in dependency order.
+// The strongly connected components will be assigned if e is inferred with
+// annotation enabled.
+//
+// Each component is a variable bound by e.
+func (e *LetGroup) StronglyConnectedComponents() [][]LetBinding { return e.sccs }
+
+// Assign the strongly connected components for e. Assignments should occur indirectly,
+// during inference.
+//
+// Each component should be a variable bound by e.
+func (e *LetGroup) SetStronglyConnectedComponents(sccs [][]LetBinding) { e.sccs = sccs }
 
 // Paired identifier and value
 type LetBinding struct {
@@ -199,7 +250,7 @@ type LetBinding struct {
 // Get the inferred (or assigned) type of e.
 func (e *LetBinding) Type() types.Type { return e.Value.Type() }
 
-// Selecting value of label: `r.a`
+// Selecting (scoped) value of label: `r.a`
 type RecordSelect struct {
 	Record   Expr
 	Label    string
@@ -240,7 +291,7 @@ type LabelValue struct {
 // Get the inferred (or assigned) type of e.
 func (e *LabelValue) Type() types.Type { return e.Value.Type() }
 
-// Deleting label: `{r - a}`
+// Deleting (scoped) label: `{r - a}`
 type RecordRestrict struct {
 	Record   Expr
 	Label    string
@@ -282,7 +333,7 @@ func (e *Variant) ExprName() string { return "Variant" }
 // Get the inferred (or assigned) type of e.
 func (e *Variant) Type() types.Type { return e.Value.Type() }
 
-// Pattern-matching case expression over tagged (ad-hoc) variant-types:
+// Variant-matching switch:
 //
 //  match e {
 //      :X a -> expr1

@@ -23,6 +23,7 @@
 package poly_test
 
 import (
+	"reflect"
 	"testing"
 
 	. "github.com/wdamron/poly"
@@ -145,7 +146,7 @@ func TestAliases(t *testing.T) {
 		"len":  TConst("int"),
 		"cap":  TConst("int"),
 	})))
-	slice := types.Generalize(TAlias(TApp(TConst("slice"), a), sliceHeader))
+	slice := Generalize(TAlias(TApp(TConst("slice"), a), sliceHeader))
 
 	intSliceHeader := TRecord(TRowExtend(types.RowEmptyPointer, TypeMap(map[string]types.Type{
 		"data": TRef(TApp(TConst("array"), TConst("int"))),
@@ -207,6 +208,7 @@ func TestControlFlow(t *testing.T) {
 	ctx := NewContext()
 
 	env.Declare("n", TConst("int"))
+	env.Declare("b", TConst("bool"))
 	env.Declare("zero", TConst("int"))
 	env.Declare("dec", TArrow1(TConst("int"), TConst("int")))
 	env.Declare("cmp", TArrow2(TConst("int"), TConst("int"), TConst("bool")))
@@ -219,25 +221,71 @@ func TestControlFlow(t *testing.T) {
 
 	cfg.SetReturn(Deref(Var("local_x")))
 
-	body := cfg.AddBlock(
+	L0 := cfg.AddBlock(
+		DerefAssign(Var("local_x"), Call(Var("dec"), Deref(Var("local_x")))),
+		Call(Var("cmp"), Deref(Var("local_x")), Var("zero")))
+
+	L1 := cfg.AddBlock(
 		DerefAssign(Var("local_x"), Call(Var("dec"), Deref(Var("local_x")))),
 		Call(Var("cmp"), Deref(Var("local_x")), Var("zero")))
 
 	cfg.AddJump(cfg.Entry, cfg.Return)
-	cfg.AddJump(cfg.Entry, body)
-	cfg.AddJump(body, body)
-	cfg.AddJump(body, cfg.Return)
+	cfg.AddJump(cfg.Entry, L0)
+	cfg.AddJump(L0, L1)
+	cfg.AddJump(L1, L0)
+	cfg.AddJump(L1, cfg.Return)
 
 	mustInfer(t, env, ctx, cfg, "int")
 
 	expect := "strange_loop(local_x) {" +
 		"entry : {*local_x = dec(n); cmp(*local_x, zero)}, " +
 		"return : *local_x, " +
-		"L0 : {*local_x = dec(*local_x); cmp(*local_x, zero)}" +
-		"} in {entry -> [return, L0], L0 -> [return, L0]}"
+		"L0 : {*local_x = dec(*local_x); cmp(*local_x, zero)}, " +
+		"L1 : {*local_x = dec(*local_x); cmp(*local_x, zero)}" +
+		"} in {entry -> [return, L0], L0 -> [L1], L1 -> [return, L0]}"
 
 	if ast.ExprString(cfg) != expect {
 		t.Fatalf("expr: %s", ast.ExprString(cfg))
+	}
+
+	// Error detection for loops (inferred as recursive functions):
+
+	cfg = ControlFlow("invalid_loop", "local_n", "local_b", "local_row")
+
+	cfg.SetEntry(
+		DerefAssign(Var("local_n"), Var("n")),
+		DerefAssign(Var("local_b"), Var("b")),
+		DerefAssign(Var("local_row"), RecordExtend(RecordEmpty(),
+			LabelValue("n", Var("n")),
+			LabelValue("b", Var("b")))),
+		Call(Var("cmp"), Deref(Var("local_n")), Var("zero")))
+
+	cfg.SetReturn(Deref(Var("local_row")))
+
+	// Record extension within loops is not supported (leads to a recursive type error):
+
+	L0 = cfg.AddBlock(
+		DerefAssign(Var("local_row"), RecordExtend(Deref(Var("local_row")),
+			LabelValue("n", Deref(Var("local_n"))),
+			LabelValue("b", Deref(Var("local_b"))))),
+		DerefAssign(Var("local_n"), Call(Var("dec"), Deref(Var("local_n")))),
+		Call(Var("cmp"), Deref(Var("local_n")), Var("zero")))
+
+	L1 = cfg.AddBlock(
+		DerefAssign(Var("local_row"), RecordExtend(Deref(Var("local_row")),
+			LabelValue("n", Deref(Var("local_n"))),
+			LabelValue("b", Deref(Var("local_b"))))),
+		DerefAssign(Var("local_n"), Call(Var("dec"), Deref(Var("local_n")))),
+		Call(Var("cmp"), Deref(Var("local_n")), Var("zero")))
+
+	cfg.AddJump(cfg.Entry, cfg.Return)
+	cfg.AddJump(cfg.Entry, L0)
+	cfg.AddJump(L0, L1)
+	cfg.AddJump(L1, L0)
+	cfg.AddJump(L1, cfg.Return)
+
+	if _, err := ctx.Infer(cfg, env); err == nil {
+		t.Fatalf("expected recursive type error")
 	}
 }
 
@@ -369,23 +417,83 @@ func TestRecursiveLet(t *testing.T) {
 	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
 	env.Declare("somebool", TConst("bool"))
 
-	expr := Func1("x",
-		Let("f",
-			Func1("x",
-				Call(
-					Var("if"),
-					Var("somebool"),
-					Var("x"),
-					Call(Var("f"), Call(Var("add"), Var("x"), Var("x"))),
+	var expr ast.Expr
+	expr =
+		Func1("x",
+			Let("f",
+				Func1("x",
+					Call(
+						Var("if"),
+						Var("somebool"),
+						Var("x"),
+						Call(Var("f"), Call(Var("add"), Var("x"), Var("x"))),
+					),
 				),
-			),
-			Call(Var("f"), Var("x")),
-		))
+				Call(Var("f"), Var("x")),
+			))
 
 	if ast.ExprString(expr) != "fn (x) -> let f(x) = if(somebool, x, f(add(x, x))) in f(x)" {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
 	mustInfer(t, env, ctx, expr, "int -> int")
+
+	// Record extension within recursive functions is not supported:
+
+	env.Declare("someint", TConst("int"))
+
+	expr =
+		Let("f", Func1("x", RecordExtend(Call(Var("f"), Var("x")), LabelValue("i", Var("someint")))),
+			Var("f"))
+
+	if _, err := ctx.Infer(expr, env); err == nil {
+		t.Fatalf("expected recursive type error")
+	}
+}
+
+func TestFixedPoint(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	// fix :: ('a -> 'a) -> 'a
+	// fix = fn (f) -> f(fix(f))
+	a := env.NewGenericVar()
+	env.Declare("fix", TArrow1(TArrow1(a, a), a))
+
+	a = env.NewGenericVar()
+	env.Declare("merge", TArrow2(a, a, a))
+
+	expr := Call(Var("fix"), Func1("f", Func1("x", Call(Var("merge"), Var("x"), Call(Var("f"), Var("x"))))))
+
+	mustInfer(t, env, ctx, expr, "'a -> 'a")
+	if ast.ExprString(expr) != "fix(fn (f) -> fn (x) -> merge(x, f(x)))" {
+		t.Fatalf("expr: %s", ast.ExprString(expr))
+	}
+
+	a = env.NewGenericVar()
+	env.Declare("if", TArrow3(TConst("bool"), a, a, a))
+	env.Declare("sub", TArrow2(TConst("int"), TConst("int"), TConst("int")))
+	env.Declare("mul", TArrow2(TConst("int"), TConst("int"), TConst("int")))
+	env.Declare("less", TArrow2(TConst("int"), TConst("int"), TConst("bool")))
+	env.Declare("1", TConst("int"))
+
+	expr =
+		Call(Var("fix"), Func1("fact", Func1("n",
+			Call(Var("if"), Call(Var("less"), Var("n"), Var("1")),
+				Var("1"),
+				Call(Var("mul"), Var("n"), Call(Var("fact"), Call(Var("sub"), Var("n"), Var("1"))))))))
+
+	mustInfer(t, env, ctx, expr, "int -> int")
+	if ast.ExprString(expr) != "fix(fn (fact) -> fn (n) -> if(less(n, 1), 1, mul(n, fact(sub(n, 1)))))" {
+		t.Fatalf("expr: %s", ast.ExprString(expr))
+	}
+
+	// Record extension within recursive functions is not supported:
+	// fix(fn (f) -> fn (x) -> {i = 1 | f(x)})
+	expr = Call(Var("fix"), Func1("f", Func1("x", RecordExtend(Call(Var("f"), Var("x")), LabelValue("i", Var("1"))))))
+
+	if _, err := ctx.Infer(expr, env); err == nil {
+		t.Fatalf("expected recursive type error")
+	}
 }
 
 func TestMutuallyRecursiveLet(t *testing.T) {
@@ -397,13 +505,7 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 	env.Declare("if", TArrow3(TConst("bool"), A, A, A))
 	env.Declare("somebool", TConst("bool"))
 
-	somebool := Var("somebool")
-	add := Var("add")
-	f := Var("f")
-	g := Var("g")
-	h := Var("h")
-	id := Var("id")
-	x := Var("x")
+	somebool, add, f, g, h, id, x := Var("somebool"), Var("add"), Var("f"), Var("g"), Var("h"), Var("id"), Var("x")
 
 	expr := LetGroup(
 		[]ast.LetBinding{
@@ -430,6 +532,21 @@ func TestMutuallyRecursiveLet(t *testing.T) {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
 	mustInfer(t, env, ctx, expr, "{f : int -> int, g : int -> int, h : int -> int, id : 'a -> 'a}")
+
+	if err := ctx.AnnotateDirect(expr, env); err != nil {
+		t.Fatal(err)
+	}
+	sccs := expr.StronglyConnectedComponents()
+	sccNames := make([][]string, len(sccs))
+	for i, scc := range sccs {
+		sccNames[i] = make([]string, len(scc))
+		for j, binding := range scc {
+			sccNames[i][j] = binding.Var
+		}
+	}
+	if !reflect.DeepEqual([][]string{{"id"}, {"g", "f"}}, sccNames) {
+		t.Fatalf("invalid strongly connected components, found %#+v", sccNames)
+	}
 }
 
 func TestVariantMatch(t *testing.T) {
@@ -712,11 +829,7 @@ func TestConstraints(t *testing.T) {
 
 	// type hierarchy
 
-	intType := TConst("int")
-	shortType := TConst("short")
-	floatType := TConst("float")
-	boolType := TConst("bool")
-
+	intType, shortType, floatType, boolType := TConst("int"), TConst("short"), TConst("float"), TConst("bool")
 	intVecType := TApp(TConst("vec"), intType)
 
 	Add, err := env.DeclareTypeClass("Add", func(param *types.Var) types.MethodSet {
@@ -777,7 +890,11 @@ func TestConstraints(t *testing.T) {
 
 	// unions
 
-	ABC, err := env.DeclareUnionTypeClass("ABC", nil, TConst("A"), TConst("B"), TConst("C"))
+	ABC, err := env.DeclareUnionTypeClass("ABC", nil, map[string]types.Type{
+		"A": TConst("A"),
+		"B": TConst("B"),
+		"C": TConst("C"),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -787,6 +904,23 @@ func TestConstraints(t *testing.T) {
 
 	call := Call(Var("fabc"), Var("somea"))
 	mustInfer(t, env, ctx, call, "A")
+
+	// (built-in) cast to a tagged variant:
+	mustInfer(t, env, ctx, Var("ABC"), "ABC 'a => 'a -> [A : A, B : B, C : C]")
+
+	call = Call(Var("ABC"), Var("somea"))
+	mustInfer(t, env, ctx, call, "[A : A, B : B, C : C]")
+
+	match := Match(Call(Var("ABC"), Var("somea")),
+		[]ast.MatchCase{
+			{Label: "A", Var: "a", Value: Var("someint")},
+			{Label: "B", Var: "b", Value: Var("someint")},
+			{Label: "C", Var: "c", Value: Var("someint")},
+		},
+		// no default case:
+		nil)
+
+	mustInfer(t, env, ctx, match, "int")
 
 	// method-instance lookups
 

@@ -20,6 +20,20 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// The following types are supported:
+//
+//   Unit:           unit/empty type
+//   Var:            type-variable
+//   Const:          type constant
+//   Size:           size constant
+//   App:            type application
+//   Arrow:          function type
+//   Method:         type-class method type
+//   Record:         record type
+//   Variant:        tagged (ad-hoc) variant-type
+//   RowExtend:      row extension
+//   RowEmpty:       empty row
+//   RecursiveLink:  recursive link to a type
 package types
 
 import (
@@ -41,6 +55,30 @@ var (
 	_ Type = (*RecursiveLink)(nil)
 )
 
+// Type is the base for all types.
+//
+// The following types are supported:
+//
+//   Unit:           unit/empty type
+//   Var:            type-variable
+//   Const:          type constant
+//   Size:           size constant
+//   App:            type application
+//   Arrow:          function type
+//   Method:         type-class method type
+//   Record:         record type
+//   Variant:        tagged (ad-hoc) variant-type
+//   RowExtend:      row extension
+//   RowEmpty:       empty row
+//   RecursiveLink:  recursive link to a type
+type Type interface {
+	TypeName() string
+	// Check if a type is a generic type-variable or contains generic type-variables.
+	IsGeneric() bool
+	// Check if a type is a mutable reference-type or contains mutable reference-types.
+	HasRefs() bool
+}
+
 // TypeEnv is a type-enviroment containing mappings from identifiers to declared types.
 type TypeEnv interface {
 	// Lookup the type for an identifier in the environment or its parent environment(s).
@@ -54,33 +92,27 @@ type TypeEnv interface {
 	NewVar(level int) *Var
 }
 
-// Type is the base for all types.
-type Type interface {
-	TypeName() string
-	// Check if a type is a generic type-variable or contains generic type-variables.
-	IsGeneric() bool
-	// Check if a type is a mutable reference-type or contains mutable reference-types.
-	HasRefs() bool
-}
-
+// TypeFlags contains flags for composite types.
 type TypeFlags uint
 
+// Flags for composite types
 const (
 	// TypeFlags for a type which is a generic type-variable or contains generic type-variables
 	ContainsGenericVars TypeFlags = 1
 	// TypeFlags for a type which is a mutable reference-type or contains mutable reference-types
 	ContainsRefs TypeFlags = 2
-	// Weakly-polymorphic types may not be generalized.
-	WeaklyPolymorphic = 4
-	// TypeFlags for a composite type which has already been generalized and should not be re-generalized.
-	NeedsGeneralization = 8
+	// TypeFlags for a recursive type which is neither being generalized nor already generalized (to break cycles).
+	NeedsGeneralization = 4
 )
 
+// Unit/empty type: `()`
 type Unit struct {
 }
 
+// Pointer to the unit type
 var UnitPointer *Unit = &Unit{}
 
+// Get a pointer to the unit type.
 func NewUnit() *Unit { return UnitPointer }
 
 // Mutable references are applications of RefType (a mutable reference-type) with a single referenced type-parameter.
@@ -93,7 +125,9 @@ func IsRefType(app *App) bool {
 }
 
 // Create an application of RefType (a mutable reference-type) with a single referenced type-parameter.
-func NewRef(deref Type) *App { return &App{Const: RefType, Args: []Type{deref}} }
+func NewRef(deref Type) *App {
+	return &App{Const: RefType, Params: []Type{deref}, Flags: ContainsRefs}
+}
 
 // Type constant: `int`, `bool`, etc
 type Const struct {
@@ -105,8 +139,10 @@ type Size int
 
 // Type application: `list[int]`
 type App struct {
+	// Const should be a type constant (constructor name) or type-variable
 	Const Type
-	Args  []Type
+	// Type parameters
+	Params []Type
 	// Aliased type (optional)
 	Underlying Type
 	// Source which this type was instantiated from, or nil
@@ -136,6 +172,7 @@ var RecordEmptyPointer = &RowExtend{Row: RowEmptyPointer}
 
 // Record type: `{a : int}`
 type Record struct {
+	// Row extension, empty row, or type-variable
 	Row Type
 	// Source which this type was instantiated from, or nil
 	Source *Record
@@ -144,6 +181,7 @@ type Record struct {
 
 // Tagged (ad-hoc) variant-type: `[i : int, s : string]`
 type Variant struct {
+	// Row extension, empty row, or type-variable
 	Row Type
 	// Source which this type was instantiated from, or nil
 	Source *Variant
@@ -152,6 +190,7 @@ type Variant struct {
 
 // Row extension: `<a : _ , b : _ | ...>`
 type RowExtend struct {
+	// Row extension, empty row, or type-variable
 	Row    Type
 	Labels TypeMap
 	// Source which this type was instantiated from, or nil
@@ -159,6 +198,7 @@ type RowExtend struct {
 	Flags  TypeFlags
 }
 
+// Pointer to the empty row type
 var RowEmptyPointer = (*RowEmpty)(nil)
 
 // Empty row: `<>`
@@ -245,9 +285,6 @@ func (t *App) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }
 
 // Check if t contains mutable reference-types.
 func (t *App) HasRefs() bool { return t.Flags&ContainsRefs != 0 || IsRefType(t) }
-
-// Check if t is weakly-polymorphic and cannot be generalized.
-func (t *App) IsWeak() bool { return t.Flags&WeaklyPolymorphic != 0 || t.HasRefs() }
 
 // Check if t contains generic types.
 func (t *Arrow) IsGeneric() bool { return t.Flags&ContainsGenericVars != 0 }

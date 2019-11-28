@@ -99,11 +99,11 @@ func (e *TypeEnv) NewQualifiedVar(constraints ...types.InstanceConstraint) *type
 func (e *TypeEnv) NewRecursive(params []*types.Var, bind func(recursive *types.Recursive)) *types.Recursive {
 	rec := &types.Recursive{Params: params, Bind: bind, Flags: types.NeedsGeneralization}
 	for i, tv := range rec.Params {
-		rec.Params[i] = types.Generalize(tv).(*types.Var)
+		rec.Params[i] = Generalize(tv).(*types.Var)
 	}
 	bind(rec)
 	for i, alias := range rec.Types {
-		rec.Types[i] = types.Generalize(alias).(*types.App)
+		rec.Types[i] = Generalize(alias).(*types.App)
 	}
 	return rec
 }
@@ -122,14 +122,14 @@ func (e *TypeEnv) NewSimpleRecursive(params []*types.Var, bindSelf func(*types.R
 //
 // Type-variables contained within mutable reference-types will be generalized.
 func (e *TypeEnv) Declare(name string, t types.Type) {
-	e.Types[name] = types.GeneralizeRefs(t)
+	e.Types[name] = GeneralizeRefs(t)
 }
 
 // Declare a weakly-polymorphic type for an identifier within the type environment.
 //
 // Type-variables contained within mutable reference-types will not be generalized.
 func (e *TypeEnv) DeclareWeak(name string, t types.Type) {
-	e.Types[name] = types.Generalize(t)
+	e.Types[name] = Generalize(t)
 }
 
 // Declare a type for an identifier within the type environment.
@@ -184,9 +184,9 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 		}
 	}
 	generalizedMethods := make(types.MethodSet, len(methods))
-	tc := types.NewTypeClass(e.freshId(), name, types.GeneralizeRefs(param), generalizedMethods)
+	tc := types.NewTypeClass(e.freshId(), name, GeneralizeRefs(param), generalizedMethods)
 	for name, arrow := range methods {
-		arrow = types.GeneralizeRefs(arrow).(*types.Arrow)
+		arrow = GeneralizeRefs(arrow).(*types.Arrow)
 		generalizedMethods[name] = arrow
 		e.Types[name] = &types.Method{TypeClass: tc, Name: name, Flags: arrow.Flags}
 	}
@@ -205,10 +205,15 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 	return tc, nil
 }
 
-// Declare a closed union (a.k.a. sum/variant/enum) type-class within the type environment. This is a shortcut for declaring a type-class with an
-// empty method-set and no super-classes then declaring the given instances for the type-class.
+// Declare a closed union (a.k.a. sum/variant/enum) type-class within the type environment. This is a shortcut for declaring a type-class
+// with an empty method-set and no super-classes then declaring the given instances for the type-class.
 //
-// If the bind function is nil or the type-parameter is not linked within the bind function, an instance constraint will be added to the parameter.
+// Additionally, a helper function will be declared in the type environment with the same name as the type-class, which converts an
+// instance of the type-class to a tagged (ad-hoc) variant-type which may be used in (tag-based) match expressions. The variant-type
+// will be labeled with the name and type of each instance.
+//
+// If the bind function is nil or the type-parameter is not linked within the bind function, an instance constraint will be added to
+// the parameter.
 //
 // A union type-class represents a named/closed set of types, whereas tagged (ad-hoc) variant-types are anonymous/open sets of types.
 // Functions may be parameterized over a union type-class; only tagged (ad-hoc) variant-types may be used in (tag-based) match expressions.
@@ -216,7 +221,7 @@ func (e *TypeEnv) DeclareTypeClass(name string, bind func(*types.Var) types.Meth
 //
 // Each super-class which the type-class implements will be modified to add a sub-class entry; changes will be visible across all uses
 // of the super-classes, and changes must not be made to type-classes concurrently.
-func (e *TypeEnv) DeclareUnionTypeClass(name string, bind func(*types.Var), instances ...types.Type) (*types.TypeClass, error) {
+func (e *TypeEnv) DeclareUnionTypeClass(name string, bind func(*types.Var), instances map[string]types.Type) (*types.TypeClass, error) {
 	bindMethods := func(param *types.Var) types.MethodSet {
 		if bind != nil {
 			bind(param)
@@ -232,6 +237,12 @@ func (e *TypeEnv) DeclareUnionTypeClass(name string, bind func(*types.Var), inst
 			return nil, err
 		}
 	}
+	e.Declare(name, &types.Arrow{
+		Args: []types.Type{e.NewQualifiedVar(types.InstanceConstraint{tc})},
+		Return: &types.Variant{
+			Row: &types.RowExtend{Labels: types.NewFlatTypeMap(instances), Row: types.RowEmptyPointer},
+		},
+	})
 	return tc, nil
 }
 
@@ -295,7 +306,7 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 		e.common = &typeutil.CommonContext{}
 		e.common.Init()
 	}
-	param = types.GeneralizeRefs(param)
+	param = GeneralizeRefs(param)
 	inst := tc.AddInstance(param, impls, methodNames)
 	seen := util.NewIntDedupeMap()
 	err := e.checkSatisfies(tc, param, impls, seen)

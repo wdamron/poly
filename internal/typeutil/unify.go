@@ -62,8 +62,8 @@ func (ctx *CommonContext) occursAdjustLevels(id, level int, t types.Type) error 
 				return err
 			}
 		}
-		for _, arg := range t.Args {
-			if err := ctx.occursAdjustLevels(id, level, arg); err != nil {
+		for _, param := range t.Params {
+			if err := ctx.occursAdjustLevels(id, level, param); err != nil {
 				return err
 			}
 		}
@@ -236,9 +236,6 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 			} else if !avar.IsSizeVar() && bvar.IsSizeVar() {
 				avar.RestrictSizeVar()
 			}
-		} else if avar.IsWeakVar() {
-			// make b weak
-			types.MarkWeak(b)
 		}
 		// prevent cyclical types:
 		if err := ctx.occursAdjustLevels(avar.Id(), avar.Level(), b); err != nil {
@@ -247,10 +244,6 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 		// propagate or eliminate type-class constraints:
 		if err := ctx.applyConstraints(avar, b); err != nil {
 			return err
-		}
-
-		if b, ok := b.(*types.App); ok && b.IsWeak() {
-			avar.SetWeak()
 		}
 
 		avar.SetLink(b)
@@ -325,11 +318,11 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 		if err := ctx.Unify(a.Const, bapp.Const); err != nil {
 			return err
 		}
-		if len(a.Args) != len(bapp.Args) {
+		if len(a.Params) != len(bapp.Params) {
 			return errors.New("Cannot unify type-applications with differing arity")
 		}
-		for i := range a.Args {
-			if err := ctx.Unify(a.Args[i], bapp.Args[i]); err != nil {
+		for i := range a.Params {
+			if err := ctx.Unify(a.Params[i], bapp.Params[i]); err != nil {
 				return err
 			}
 		}

@@ -94,15 +94,15 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 		return &types.RecursiveLink{Recursive: next, Index: t.Index, Source: t}
 
 	case *types.App:
-		args := make([]types.Type, len(t.Args))
-		for i, arg := range t.Args {
-			args[i] = ctx.visitInstantiate(level, arg)
+		params := make([]types.Type, len(t.Params))
+		for i, param := range t.Params {
+			params[i] = ctx.visitInstantiate(level, param)
 		}
 		var underlying types.Type
 		if t.Underlying != nil {
 			underlying = ctx.visitInstantiate(level, t.Underlying)
 		}
-		return &types.App{Const: ctx.visitInstantiate(level, t.Const), Args: args, Underlying: underlying, Source: t}
+		return &types.App{Const: ctx.visitInstantiate(level, t.Const), Params: params, Underlying: underlying, Source: t}
 
 	case *types.Arrow:
 		args := make([]types.Type, len(t.Args))

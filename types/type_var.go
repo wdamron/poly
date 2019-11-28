@@ -22,7 +22,7 @@
 
 package types
 
-// Special binding-levels for type-variables:
+// Special binding-levels for type-variables
 const (
 	TopLevel        = 0
 	GenericVarLevel = 1 << 31

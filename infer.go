@@ -39,7 +39,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			for i, name := range e.Using {
 				vt := env.Lookup(name)
 				if vt == nil {
-					return nil, errors.New("Variable " + name + " not is not defined")
+					return nil, errors.New("Variable " + name + " is not defined")
 				}
 				using[i] = vt
 			}
@@ -59,7 +59,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 	case *ast.Var:
 		t := env.Lookup(e.Name)
 		if t == nil {
-			ti.invalid, ti.err = e, errors.New("Variable "+e.Name+" not is not defined")
+			ti.invalid, ti.err = e, errors.New("Variable "+e.Name+" is not defined")
 			return nil, ti.err
 		}
 		t = ti.common.Instantiate(level, t)
@@ -75,9 +75,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		}
 		tv := ti.common.VarTracker.New(level)
 		tv.SetWeak()
-		ref := types.NewRef(tv)
-		ref.Flags |= types.ContainsRefs | types.WeaklyPolymorphic
-		if err := ti.common.Unify(t, ref); err != nil {
+		if err := ti.common.Unify(types.NewRef(tv), t); err != nil {
 			ti.invalid, ti.err = e, err
 			return t, err
 		}
@@ -88,31 +86,29 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		return t, nil
 
 	case *ast.DerefAssign:
-		refType, err := ti.infer(env, level, e.Ref)
+		ref, err := ti.infer(env, level, e.Ref)
 		if err != nil {
-			return refType, err
+			return ref, err
 		}
 		tv := ti.common.VarTracker.New(level)
 		tv.SetWeak()
-		ref := types.NewRef(tv)
-		ref.Flags |= types.ContainsRefs | types.WeaklyPolymorphic
-		if err := ti.common.Unify(ref, refType); err != nil {
+		if err := ti.common.Unify(types.NewRef(tv), ref); err != nil {
 			ti.invalid, ti.err = e, err
-			return refType, err
+			return ref, err
 		}
-		valType, err := ti.infer(env, level, e.Value)
+		val, err := ti.infer(env, level, e.Value)
 		if err != nil {
-			return refType, err
+			return ref, err
 		}
-		if err := ti.common.Unify(tv, valType); err != nil {
+		if err := ti.common.Unify(tv, val); err != nil {
 			ti.invalid, ti.err = e, err
-			return refType, err
+			return ref, err
 		}
-		refType = types.RealType(refType)
+		ref = types.RealType(ref)
 		if ti.annotate {
-			e.SetType(refType)
+			e.SetType(ref)
 		}
-		return refType, nil
+		return ref, nil
 
 	case *ast.Pipe:
 		// Inline equivalent to inferring as nested (non-recursive) let-bindings:
@@ -129,7 +125,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		stashed := ti.common.Stash(env, e.As)
 		for _, step := range e.Sequence {
 			// Reassign the placeholder:
-			env.Assign(e.As, types.GeneralizeAtLevel(level, t))
+			env.Assign(e.As, GeneralizeAtLevel(level, t))
 			t, err = ti.infer(env, level, step)
 		}
 		if ti.annotate && err != nil {
@@ -141,50 +137,27 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		return t, err
 
 	case *ast.ControlFlow:
-		// Evaluate all sub-expressions in a new scope with local variables bound to mutable references:
-		stashed := 0
-		for _, name := range e.Locals {
-			stashed += ti.common.Stash(env, name)
-			tv := ti.common.VarTracker.New(level)
-			tv.SetWeak()
-			ref := types.NewRef(tv)
-			ref.Flags |= types.ContainsRefs | types.WeaklyPolymorphic
-			env.Assign(name, ref)
-		}
-		for _, sub := range e.Entry.Sequence {
-			if _, err := ti.infer(env, level+1, sub); err != nil {
-				return nil, err
-			}
-		}
-		for _, block := range e.Blocks {
-			for _, sub := range block.Sequence {
-				if _, err := ti.infer(env, level+1, sub); err != nil {
-					return nil, err
-				}
-			}
-		}
-		var ret types.Type
-		for i, sub := range e.Return.Sequence {
-			t, err := ti.infer(env, level+1, sub)
-			if err != nil {
-				return nil, err
-			}
-			if i != len(e.Return.Sequence)-1 {
-				continue
-			}
-			ret = t
-			if ti.annotate {
-				e.SetType(t)
-			}
-		}
-		// Restore the parent scope:
-		for _, name := range e.Locals {
-			env.Remove(name)
-		}
-		ti.common.Unstash(env, stashed)
-		return ret, nil
+		// Loops are detected through SCC analysis and inferred as recursive functions.
+		// Blocks are inferred in dependency order:
+		return ti.inferControlFlow(env, level, e)
 
 	case *ast.Let:
+		// Don't instantiate/generalize `let x = <var>`
+		if v, ok := e.Value.(*ast.Var); ok {
+			t := env.Lookup(v.Name)
+			if t == nil {
+				ti.invalid, ti.err = e, errors.New("Variable "+v.Name+" is not defined")
+				return nil, ti.err
+			}
+			// Begin a new scope:
+			stashed := ti.common.Stash(env, e.Var)
+			env.Assign(e.Var, t)
+			t, err = ti.infer(env, level, e.Body)
+			env.Remove(e.Var)
+			// Restore the parent scope:
+			ti.common.Unstash(env, stashed)
+			return t, err
+		}
 		// Disallow self-references within non-function types:
 		if _, isFunc := e.Value.(*ast.Func); !isFunc {
 			t, err := ti.infer(env, level+1, e.Value)
@@ -193,7 +166,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			}
 			// Begin a new scope:
 			stashed := ti.common.Stash(env, e.Var)
-			env.Assign(e.Var, types.GeneralizeAtLevel(level, t))
+			env.Assign(e.Var, GeneralizeAtLevel(level, t))
 			t, err = ti.infer(env, level, e.Body)
 			env.Remove(e.Var)
 			// Restore the parent scope:
@@ -213,7 +186,7 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		env.Assign(e.Var, types.GeneralizeAtLevel(level, t))
+		env.Assign(e.Var, GeneralizeAtLevel(level, t))
 		t, err = ti.infer(env, level, e.Body)
 		env.Remove(e.Var)
 		// Restore the parent scope:
@@ -221,76 +194,8 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 		return t, err
 
 	case *ast.LetGroup:
-		if !ti.analyzed {
-			if err := ti.analysis.Analyze(ti.rootExpr); err != nil {
-				ti.invalid, ti.err, ti.analysis.Invalid = ti.analysis.Invalid, err, nil
-				return nil, err
-			}
-			ti.analyzed = true
-		}
-		stashed, groupNum := 0, ti.letGroupCount
-		ti.letGroupCount++
 		// Grouped let-bindings are sorted into strongly-connected components, then type-checked in dependency order:
-		for _, scc := range ti.analysis.Sccs[groupNum] {
-			// Add fresh type-variables for bindings:
-			vars := ti.common.VarTracker.NewList(level+1, len(scc))
-			tv, tail := vars.Head(), vars.Tail()
-			// Begin a new scope:
-			for _, bindNum := range scc {
-				v := e.Vars[bindNum]
-				stashed += ti.common.Stash(env, v.Var)
-				env.Assign(v.Var, tv)
-				tv, tail = tail.Head(), tail.Tail()
-			}
-			// Infer types:
-			tv, tail = vars.Head(), vars.Tail()
-			for _, bindNum := range scc {
-				v := e.Vars[bindNum]
-				var isFunc bool
-				// To prevent self-references within non-function types, stash/remove the type-variable:
-				if _, isFunc = v.Value.(*ast.Func); !isFunc {
-					exists := false
-					for i := 0; i < stashed; i++ {
-						existing := ti.common.EnvStash[len(ti.common.EnvStash)-(1+i)]
-						if existing.Name == v.Var {
-							env.Assign(v.Var, existing.Type)
-							exists = true
-							break
-						}
-					}
-					if !exists {
-						env.Remove(v.Var)
-					}
-				}
-				t, err := ti.infer(env, level+1, v.Value)
-				if err != nil {
-					return nil, err
-				}
-				if err := ti.common.Unify(tv, t); err != nil {
-					ti.invalid, ti.err = e, err
-					return nil, err
-				}
-				// Restore the previously stashed/removed type-variable:
-				if !isFunc {
-					env.Assign(v.Var, tv)
-				}
-				tv, tail = tail.Head(), tail.Tail()
-			}
-			// Generalize types:
-			tv, tail = vars.Head(), vars.Tail()
-			for _, bindNum := range scc {
-				v := e.Vars[bindNum]
-				env.Assign(v.Var, types.GeneralizeAtLevel(level, tv))
-				tv, tail = tail.Head(), tail.Tail()
-			}
-		}
-		t, err := ti.infer(env, level, e.Body)
-		for _, v := range e.Vars {
-			env.Remove(v.Var)
-		}
-		// Restore the parent scope:
-		ti.common.Unstash(env, stashed)
-		return t, err
+		return ti.inferLetGroup(env, level, e)
 
 	case *ast.Func:
 		args := make([]types.Type, len(e.ArgNames))
@@ -394,7 +299,14 @@ func (ti *InferenceContext) infer(env *TypeEnv, level int, e ast.Expr) (ret type
 			ti.invalid, ti.err = e, err
 			return nil, err
 		}
-		rt := &types.Record{Row: &types.RowExtend{Row: rowType, Labels: mb.Build()}}
+		ext := &types.RowExtend{Row: rowType, Labels: mb.Build()}
+		labels, rest, err := types.FlattenRowType(ext)
+		if err != nil {
+			ti.invalid, ti.err = e, err
+			return nil, err
+		}
+		ext.Labels, ext.Row = labels, rest
+		rt := &types.Record{Row: ext}
 		if ti.annotate {
 			e.SetType(rt)
 		}
@@ -564,4 +476,181 @@ func (ti *InferenceContext) inferCases(env *TypeEnv, level int, retType, rowType
 	}
 	// Return the accumulated record which maps each variant label to its associated type(s):
 	return rowType, nil
+}
+
+// Grouped let-bindings are sorted into strongly-connected components, then type-checked in dependency order.
+func (ti *InferenceContext) inferLetGroup(env *TypeEnv, level int, e *ast.LetGroup) (ret types.Type, err error) {
+	if !ti.analyzed {
+		if err := ti.analysis.Analyze(ti.rootExpr); err != nil {
+			ti.invalid, ti.err, ti.analysis.Invalid = ti.analysis.Invalid, err, nil
+			return nil, err
+		}
+		ti.analyzed = true
+	}
+	stashed, sccs := 0, ti.analysis.SCC[ti.letGroupCount]
+	ti.letGroupCount++
+	// Grouped let-bindings are sorted into strongly-connected components, then type-checked in dependency order:
+	for _, scc := range sccs {
+		// Add fresh type-variables for bindings:
+		vars := ti.common.VarTracker.NewList(level+1, len(scc))
+		tv, tail := vars.Head(), vars.Tail()
+		// Begin a new scope:
+		for _, bindNum := range scc {
+			v := e.Vars[bindNum]
+			stashed += ti.common.Stash(env, v.Var)
+			env.Assign(v.Var, tv)
+			tv, tail = tail.Head(), tail.Tail()
+		}
+		// Infer types:
+		tv, tail = vars.Head(), vars.Tail()
+		for _, bindNum := range scc {
+			v := e.Vars[bindNum]
+			var isFunc bool
+			// To prevent self-references within non-function types, stash/remove the type-variable:
+			if _, isFunc = v.Value.(*ast.Func); !isFunc {
+				exists := false
+				for i := 0; i < stashed; i++ {
+					existing := ti.common.EnvStash[len(ti.common.EnvStash)-(1+i)]
+					if existing.Name == v.Var {
+						env.Assign(v.Var, existing.Type)
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					env.Remove(v.Var)
+				}
+			}
+			t, err := ti.infer(env, level+1, v.Value)
+			if err != nil {
+				return nil, err
+			}
+			if err := ti.common.Unify(tv, t); err != nil {
+				ti.invalid, ti.err = e, err
+				return nil, err
+			}
+			// Restore the previously stashed/removed type-variable:
+			if !isFunc {
+				env.Assign(v.Var, tv)
+			}
+			tv, tail = tail.Head(), tail.Tail()
+		}
+		// Generalize types:
+		tv, tail = vars.Head(), vars.Tail()
+		for _, bindNum := range scc {
+			v := e.Vars[bindNum]
+			env.Assign(v.Var, GeneralizeAtLevel(level, tv))
+			tv, tail = tail.Head(), tail.Tail()
+		}
+	}
+	t, err := ti.infer(env, level, e.Body)
+	// Restore the parent scope:
+	for _, v := range e.Vars {
+		env.Remove(v.Var)
+	}
+	ti.common.Unstash(env, stashed)
+	if err == nil && ti.annotate {
+		sccBindings := make([][]ast.LetBinding, len(sccs))
+		for i, scc := range sccs {
+			cycle := make([]ast.LetBinding, len(scc))
+			for j, binding := range scc {
+				cycle[j] = e.Vars[binding]
+			}
+			sccBindings[i] = cycle
+		}
+		e.SetStronglyConnectedComponents(sccBindings)
+	}
+	return t, err
+}
+
+// Loops are detected through SCC analysis and inferred as recursive functions. Blocks are inferred in dependency order.
+func (ti *InferenceContext) inferControlFlow(env *TypeEnv, level int, e *ast.ControlFlow) (ret types.Type, err error) {
+	// Evaluate all sub-expressions in a new scope with local variables bound to mutable references:
+	stashed := 0
+	refs := make([]*types.App, len(e.Locals))
+	vars := ti.common.VarTracker.NewList(level, len(e.Locals))
+	tv, tail := vars.Head(), vars.Tail()
+	for i, name := range e.Locals {
+		stashed += ti.common.Stash(env, name)
+		tv.SetWeak()
+		ref := types.NewRef(tv)
+		env.Assign(name, ref)
+		refs[i] = ref
+		tv, tail = tail.Head(), tail.Tail()
+	}
+	// Loops are detected through SCC analysis and inferred as recursive functions. Ensure all blocks and
+	// cycles in the strongly connected components for e reach the return block, directly or transitively:
+	sccs, err := e.Validate(ti.annotate)
+	if err != nil {
+		ti.invalid, ti.err = e, err
+		return nil, err
+	}
+	var tmpRefs []*types.App
+	// Blocks will be inferred in dependency order:
+	for _, cycle := range sccs {
+		// A component with a single block which doesn't jump to itself is not a cycle or part of a cycle:
+		if len(cycle) == 1 && !e.HasJump(cycle[0], cycle[0]) {
+			block := cycle[0]
+			for i, sub := range block.Sequence {
+				t, err := ti.infer(env, level, sub)
+				if err != nil {
+					return nil, err
+				}
+				// The last expression within the return block determines the return type:
+				if block.Index == ast.ControlFlowReturnIndex && i == len(block.Sequence)-1 {
+					ret = t
+					if ti.annotate {
+						e.SetType(t)
+					}
+				}
+			}
+			continue
+		}
+		// A component with more than 1 block or a single block which jumps to itself is a cycle.
+		// Cycles (loops) are inferred similarly to recursive functions.
+		//
+		// Evaluate all sub-expressions in a new scope with local variables bound to mutable references:
+		if len(tmpRefs) == 0 {
+			tmpRefs = make([]*types.App, len(e.Locals))
+		}
+		vars := ti.common.VarTracker.NewList(level, len(e.Locals))
+		tv, tail := vars.Head(), vars.Tail()
+		for i, name := range e.Locals {
+			tv.SetWeak()
+			ref := types.NewRef(tv)
+			env.Assign(name, ref)
+			tmpRefs[i] = ref
+			tv, tail = tail.Head(), tail.Tail()
+		}
+		for _, block := range cycle {
+			// The entry and return blocks are handled above (as non-cycles).
+			for _, sub := range block.Sequence {
+				if _, err := ti.infer(env, level, sub); err != nil {
+					return nil, err
+				}
+			}
+		}
+		// Check consistent usage of locals across loop iterations:
+		for i, ref := range refs {
+			if err := ti.common.Unify(ref, tmpRefs[i]); err != nil {
+				ti.invalid, ti.err = e, err
+				return nil, err
+			}
+		}
+		// Restore the previous scope:
+		for i, name := range e.Locals {
+			env.Assign(name, refs[i])
+		}
+	}
+
+	// Restore the parent scope:
+	for _, name := range e.Locals {
+		env.Remove(name)
+	}
+	ti.common.Unstash(env, stashed)
+	if ret == nil {
+		ti.invalid, ti.err = e, errors.New("Control flow must reach the return block and return a value")
+		return nil, ti.err
+	}
+	return ret, nil
 }

@@ -26,7 +26,28 @@ import (
 	"errors"
 
 	"github.com/wdamron/poly/ast"
+	"github.com/wdamron/poly/internal/util"
 )
+
+type StashedScope struct {
+	Name     string
+	GroupNum int
+}
+
+type Graph struct {
+	Verts map[string]int
+	Edges util.Graph
+}
+
+func (g *Graph) addVert(name string) bool {
+	if _, ok := g.Verts[name]; ok {
+		return false
+	}
+	g.Verts[name] = len(g.Verts)
+	return true
+}
+
+func (g *Graph) addEdge(from, to int) { g.Edges.AddEdge(from, to) }
 
 // Analysis for grouped let-bindings which may be mutually-recursive; borrowed from Haskell.
 // https://prime.haskell.org/wiki/RelaxedDependencyAnalysis
@@ -40,27 +61,22 @@ import (
 type Analysis struct {
 	Scopes      map[string]int // map from variable to let-group number (or -1 for variables not bound by let-groups)
 	ScopeStash  []StashedScope // shadowed variable-scope mappings
-	Graphs      []graph        // indexed by let-group number
+	Graphs      []Graph        // indexed by let-group number
 	CurrentVert []int          // indexed by let-group number
-	Sccs        [][][]int      // indexed by let-group number
+	SCC         [][][]int      // indexed by let-group number
 	Err         error
 	Invalid     ast.Expr
 
 	// initial space:
 	_scopeStash  [16]StashedScope
-	_graphs      [16]graph
+	_graphs      [16]Graph
 	_currentVert [16]int
 	_sccs        [16][][]int
 }
 
-type StashedScope struct {
-	Name     string
-	GroupNum int
-}
-
 func (a *Analysis) Init() {
 	a.Scopes = make(map[string]int, 32)
-	a.ScopeStash, a.Graphs, a.CurrentVert, a.Sccs =
+	a.ScopeStash, a.Graphs, a.CurrentVert, a.SCC =
 		a._scopeStash[:0], a._graphs[:0], a._currentVert[:0], a._sccs[:0]
 }
 
@@ -72,7 +88,7 @@ func (a *Analysis) Reset() {
 		a._scopeStash[i] = StashedScope{}
 	}
 	for i := range a._graphs {
-		a._graphs[i] = graph{}
+		a._graphs[i] = Graph{}
 	}
 	for i := range a._currentVert {
 		a._currentVert[i] = -1
@@ -80,8 +96,8 @@ func (a *Analysis) Reset() {
 	for i := range a._sccs {
 		a._sccs[i] = nil
 	}
-	a.ScopeStash, a.Graphs, a.CurrentVert, a.Sccs, a.Err, a.Invalid =
-		a._scopeStash[:0], a._graphs[:0], a._currentVert[:0], nil, nil, nil
+	a.ScopeStash, a.Graphs, a.CurrentVert, a.SCC, a.Err, a.Invalid =
+		a._scopeStash[:0], a._graphs[:0], a._currentVert[:0], a._sccs[:0], nil, nil
 }
 
 func (a *Analysis) Analyze(root ast.Expr) error {
@@ -91,17 +107,12 @@ func (a *Analysis) Analyze(root ast.Expr) error {
 	}
 	ng := len(a.Graphs)
 	if ng > len(a._sccs) {
-		a.Sccs = make([][][]int, ng)
+		a.SCC = make([][][]int, ng)
 	} else {
-		a.Sccs = a._sccs[:ng]
+		a.SCC = a._sccs[:ng]
 	}
 	for groupNum := range a.Graphs {
-		a.Sccs[groupNum] = tarjanSCC(&a.Graphs[groupNum])
-		// Reverse the order for a topological sort:
-		sccs := a.Sccs[groupNum]
-		for i, j := 0, len(sccs)-1; i < j; i, j = i+1, j-1 {
-			sccs[i], sccs[j] = sccs[j], sccs[i]
-		}
+		a.SCC[groupNum] = a.Graphs[groupNum].Edges.SCC()
 	}
 	return nil
 }
@@ -134,7 +145,7 @@ func (a *Analysis) analyzeExpr(expr ast.Expr) error {
 			if groupNum, ok := a.Scopes[name]; ok && groupNum >= 0 {
 				graph := &a.Graphs[groupNum]
 				if a.CurrentVert[groupNum] >= 0 {
-					graph.addEdge(graph.verts[name], a.CurrentVert[groupNum])
+					graph.addEdge(graph.Verts[name], a.CurrentVert[groupNum])
 				}
 			}
 		}
@@ -143,7 +154,7 @@ func (a *Analysis) analyzeExpr(expr ast.Expr) error {
 		if groupNum, ok := a.Scopes[expr.Name]; ok && groupNum >= 0 {
 			graph := &a.Graphs[groupNum]
 			if a.CurrentVert[groupNum] >= 0 {
-				graph.addEdge(graph.verts[expr.Name], a.CurrentVert[groupNum])
+				graph.addEdge(graph.Verts[expr.Name], a.CurrentVert[groupNum])
 			}
 		}
 
@@ -249,9 +260,9 @@ func (a *Analysis) analyzeExpr(expr ast.Expr) error {
 
 	case *ast.LetGroup:
 		num := len(a.Graphs)
-		a.Graphs = append(a.Graphs, graph{
-			verts: make(map[string]int, len(expr.Vars)),
-			edges: make([][]int, len(expr.Vars)),
+		a.Graphs = append(a.Graphs, Graph{
+			Verts: make(map[string]int, len(expr.Vars)),
+			Edges: util.NewGraph(len(expr.Vars)),
 		})
 		a.CurrentVert = append(a.CurrentVert, -1)
 		graph := &a.Graphs[num]
@@ -360,101 +371,4 @@ func (a *Analysis) analyzeExpr(expr ast.Expr) error {
 	}
 
 	return nil
-}
-
-// Tarjan's SCC algorithm, based on https://github.com/gonum/gonum/blob/master/graph/topo/tarjan.go
-//
-// Components will be output in reversed dependency-order. Reversing the output creates a proper topological sort.
-
-type graph struct {
-	verts map[string]int
-	edges [][]int
-}
-
-func (g *graph) addVert(name string) bool {
-	if _, ok := g.verts[name]; ok {
-		return false
-	}
-	g.verts[name] = len(g.verts)
-	return true
-}
-
-func (g *graph) addEdge(from, to int) {
-	for _, succ := range g.edges[from] {
-		if succ == to {
-			return
-		}
-	}
-	g.edges[from] = append(g.edges[from], to)
-}
-
-type sccState struct {
-	index      int
-	indexTable []int
-	lowLink    []int
-	onStack    []bool
-
-	stack []int
-	sccs  [][]int
-}
-
-func tarjanSCC(g *graph) [][]int {
-	state := sccState{
-		indexTable: make([]int, len(g.edges)),
-		lowLink:    make([]int, len(g.edges)),
-		onStack:    make([]bool, len(g.edges)),
-	}
-	for v := range g.edges {
-		if state.indexTable[v] == 0 {
-			state.tarjanSCC(g, v)
-		}
-	}
-	return state.sccs
-}
-
-func (state *sccState) tarjanSCC(g *graph, v int) {
-	min := func(a, b int) int {
-		if a < b {
-			return a
-		}
-		return b
-	}
-	// Set the depth index for v to the smallest unused index
-	state.index++
-	state.indexTable[v] = state.index
-	state.lowLink[v] = state.index
-	state.stack = append(state.stack, v)
-	state.onStack[v] = true
-
-	// Consider successors of v
-	for _, succ := range g.edges[v] {
-		if state.indexTable[succ] == 0 {
-			// Successor has not yet been visited; recur on it
-			state.tarjanSCC(g, succ)
-			state.lowLink[v] = min(state.lowLink[v], state.lowLink[succ])
-		} else if state.onStack[succ] {
-			// Successor is in stack s and hence in the current SCC
-			state.lowLink[v] = min(state.lowLink[v], state.indexTable[succ])
-		}
-	}
-
-	// If v is a root node, pop the stack and generate an SCC
-	if state.lowLink[v] == state.indexTable[v] {
-		// Start a new strongly connected component
-		var (
-			c    []int
-			succ int
-		)
-		for {
-			succ, state.stack = state.stack[len(state.stack)-1], state.stack[:len(state.stack)-1]
-			state.onStack[succ] = false
-			// Add successor to current strongly connected component
-			c = append(c, succ)
-			if succ == v {
-				break
-			}
-		}
-		// Output the current strongly connected component
-		state.sccs = append(state.sccs, c)
-	}
 }

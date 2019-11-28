@@ -18,7 +18,9 @@ The core of the implementation is based on an [OCaml library](https://github.com
 * Mutually-recursive (generic) function expressions within grouped let bindings
 * Mutually-recursive (generic) data types
 * Transparently aliased (generic) types
-* Mutable references
+* Control-flow graph expressions
+* Mutable references with the [value restriction](https://en.wikipedia.org/wiki/Value_restriction)
+* Size-bound type variables
 
 ## More Info
 

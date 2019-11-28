@@ -42,6 +42,15 @@ func SingletonTypeMap(label string, t Type) TypeMap {
 	return TypeMap{emptyMap.Set(label, emptyList.Append(t))}
 }
 
+// Create a TypeMap with unscoped labels.
+func NewFlatTypeMap(m map[string]Type) TypeMap {
+	b := NewTypeMapBuilder()
+	for name, t := range m {
+		b.Set(name, SingletonTypeList(t))
+	}
+	return b.Build()
+}
+
 // Get the number of entries in the map.
 func (m TypeMap) Len() int { return m.m.Len() }
 

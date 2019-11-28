@@ -205,15 +205,15 @@ func typeString(p *typePrinter, simple bool, t Type) {
 
 	case *App:
 		typeString(p, true, t.Const)
-		if len(t.Args) == 0 {
+		if len(t.Params) == 0 {
 			return
 		}
 		p.sb.WriteByte('[')
-		for i, arg := range t.Args {
+		for i, param := range t.Params {
 			if i > 0 {
 				p.sb.WriteString(", ")
 			}
-			typeString(p, false, arg)
+			typeString(p, false, param)
 		}
 		p.sb.WriteByte(']')
 

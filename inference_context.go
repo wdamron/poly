@@ -47,7 +47,7 @@ type InferenceContext struct {
 	annotate      bool
 }
 
-// Create a new type-inference context. A context may be re-used across calls of ExprType.
+// Create a new type-inference context. A context may be reused for inference.
 func NewContext() *InferenceContext {
 	ti := &InferenceContext{}
 	ti.init()
@@ -70,7 +70,7 @@ func (ti *InferenceContext) reset() {
 		nil, nil, nil, 0, false
 }
 
-// Reset the state of the context. The context will be reset automatically between calls of ExprType.
+// Reset the state of the context. The context will be reset automatically before inference.
 func (ti *InferenceContext) Reset() {
 	if !ti.needsReset {
 		return
@@ -141,7 +141,7 @@ func (ti *InferenceContext) inferRoot(root ast.Expr, env *TypeEnv, nocopy bool) 
 	if err != nil {
 		return root, t, err
 	}
-	t = types.Generalize(t)
+	t = Generalize(t)
 	ti.common.VarTracker.FlattenLinks()
 	return root, t, nil
 }

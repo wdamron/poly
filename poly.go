@@ -29,28 +29,26 @@
 //
 // Supported Features:
 //
-// * Extensible records and variants with scoped labels
-//
-// * Generic type classes, constructor classes, and parametric overloading
-//
-// * Limited/explicit (type class) subtyping with multiple inheritance
-//
-// * Mutually-recursive (generic) function expressions within grouped let bindings
-//
-// * Mutually-recursive (generic) data types
-//
-// * Transparently aliased (generic) types
-//
-// * Mutable references
+//   * Extensible records and variants with scoped labels
+//   * Generic type classes, constructor classes, and parametric overloading
+//   * Limited/explicit (type class) subtyping with multiple inheritance
+//   * Mutually-recursive (generic) function expressions within grouped let bindings
+//   * Mutually-recursive (generic) data types
+//   * Transparently aliased (generic) types
+//   * Control-flow graph expressions
+//   * Mutable references with the value restriction
+//   * Size-bound type variables
 //
 //
 // Links:
 //
-// * extensible_rows2 (OCaml implementation): https://github.com/tomprimozic/type-systems/tree/master/extensible_rows2
+// extensible_rows2 (OCaml implementation): https://github.com/tomprimozic/type-systems/tree/master/extensible_rows2
 //
-// * Extensible Records with Scoped Labels (Leijen, 2005): https://www.microsoft.com/en-us/research/publication/extensible-records-with-scoped-labels/
+// Extensible Records with Scoped Labels (Leijen, 2005): https://www.microsoft.com/en-us/research/publication/extensible-records-with-scoped-labels/
 //
-// * Efficient Generalization with Levels (Oleg Kiselyov): http://okmij.org/ftp/ML/generalization.html#levels
+// Efficient Generalization with Levels (Oleg Kiselyov): http://okmij.org/ftp/ML/generalization.html#levels
 //
-// * Hindley-Milner type system (Wikipedia): https://en.wikipedia.org/wiki/Hindley–Milner_type_system
+// Hindley-Milner type system: https://en.wikipedia.org/wiki/Hindley–Milner_type_system
+//
+// Value restriction: https://en.wikipedia.org/wiki/Value_restriction
 package poly
