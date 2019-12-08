@@ -26,14 +26,14 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-func GeneralizeOpts(level int, t types.Type, forceGeneralize, weak bool) types.Type {
+func GeneralizeOpts(level uint, t types.Type, forceGeneralize, weak bool) types.Type {
 	// Path compression:
 	t = types.RealType(t)
 	visitTypeVars(level, t, forceGeneralize, weak)
 	return t
 }
 
-func visitTypeVars(level int, t types.Type, forceGeneralize, weak bool) (tf types.TypeFlags) {
+func visitTypeVars(level uint, t types.Type, forceGeneralize, weak bool) (tf types.TypeFlags) {
 	switch t := t.(type) {
 	case *types.Unit:
 		return

@@ -90,6 +90,17 @@ type Expr interface {
 	Type() types.Type
 }
 
+// PredeclaredScope is a placeholder scope for variables bound outside an expression, or top-level variables.
+var PredeclaredScope = &Scope{}
+
+// Scope is a variable-binding scope, such as a let-binding or function.
+type Scope struct {
+	// Expr is an expression which introduces a new variable-binding scope
+	Expr Expr
+	// Parent is the nearest scope which encloses the expression
+	Parent *Scope
+}
+
 // Semi-opaque literal value
 type Literal struct {
 	// Syntax is a string representation of the literal value. The syntax will be printed when the literal is printed.
@@ -98,7 +109,7 @@ type Literal struct {
 	Using []string
 	// Construct should produce a type at the given binding-level. The constructed type may include
 	// types derived from variables which are already in scope (retrieved from the type-environment).
-	Construct func(env types.TypeEnv, level int, using []types.Type) (types.Type, error)
+	Construct func(env types.TypeEnv, level uint, using []types.Type) (types.Type, error)
 	inferred  types.Type
 }
 
@@ -115,6 +126,7 @@ func (e *Literal) SetType(t types.Type) { e.inferred = t }
 type Var struct {
 	Name     string
 	inferred types.Type
+	scope    *Scope
 }
 
 // "Var"
@@ -123,8 +135,14 @@ func (e *Var) ExprName() string { return "Var" }
 // Get the inferred (or assigned) type of e.
 func (e *Var) Type() types.Type { return types.RealType(e.inferred) }
 
+// Get the inferred (or assigned) scope where e is defined.
+func (e *Var) Scope() *Scope { return e.scope }
+
 // Assign a type to e. Type assignments should occur indirectly, during inference.
 func (e *Var) SetType(t types.Type) { e.inferred = t }
+
+// Assign a binding scope for e. Scope assignments should occur indirectly, during inference.
+func (e *Var) SetScope(scope *Scope) { e.scope = scope }
 
 // Dereference: `*x`
 type Deref struct {

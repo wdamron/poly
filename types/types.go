@@ -89,7 +89,7 @@ type TypeEnv interface {
 	// and the identifier's type will still be visible if defined in a parent environment.
 	Remove(name string)
 	// Create a new type-variable at a given binding-level.
-	NewVar(level int) *Var
+	NewVar(level uint) *Var
 }
 
 // TypeFlags contains flags for composite types.

@@ -28,7 +28,7 @@ func CopyExpr(e Expr) Expr {
 		return &Literal{e.Syntax, e.Using, e.Construct, e.inferred}
 
 	case *Var:
-		return &Var{e.Name, e.inferred}
+		return &Var{e.Name, e.inferred, e.scope}
 
 	case *Deref:
 		return &Deref{e.Ref, e.inferred}

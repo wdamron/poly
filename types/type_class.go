@@ -32,14 +32,17 @@ type MethodSet map[string]*Arrow
 // Parameterized type-class
 type TypeClass struct {
 	// Id should uniquely identify the type-class
-	Id int
+	Id uint
 	// Name should uniquely identify the type-class
 	Name      string
 	Param     Type
 	Methods   MethodSet
-	Super     map[int]*TypeClass
-	Sub       map[int]*TypeClass
+	Super     map[uint]*TypeClass
+	Sub       map[uint]*TypeClass
 	Instances []*Instance
+	// Union type-classes may be cast to a tagged (ad-hoc) variant from their labelled instances
+	Union        map[string]*Instance
+	UnionVariant *Variant
 
 	// partially-grouped instances for faster lookups:
 
@@ -55,9 +58,13 @@ type Instance struct {
 	TypeClass *TypeClass
 	Param     Type
 	Methods   MethodSet
+	// Strict disables type-variable unification during instance matching.
+	Strict bool
 	// MethodNames maps method names to names of their implementations within the type-environment.
 	MethodNames map[string]string
 }
+
+func (inst *Instance) SetStrict(strict bool) { inst.Strict = strict }
 
 // InstanceConstraint constrains a type-variable to types which implement a type-class.
 type InstanceConstraint struct {
@@ -65,7 +72,7 @@ type InstanceConstraint struct {
 }
 
 // Create a new named/parameterized type-class with a set of method declarations.
-func NewTypeClass(id int, name string, param Type, methods MethodSet) *TypeClass {
+func NewTypeClass(id uint, name string, param Type, methods MethodSet) *TypeClass {
 	return &TypeClass{Id: id, Name: name, Param: param, Methods: methods}
 }
 
@@ -78,10 +85,10 @@ func (super *TypeClass) AddSubClass(sub *TypeClass) {
 		return
 	}
 	if sub.Super == nil {
-		sub.Super = make(map[int]*TypeClass)
+		sub.Super = make(map[uint]*TypeClass)
 	}
 	if super.Sub == nil {
-		super.Sub = make(map[int]*TypeClass)
+		super.Sub = make(map[uint]*TypeClass)
 	}
 	sub.Super[super.Id] = super
 	super.Sub[sub.Id] = sub
@@ -120,13 +127,13 @@ func (tc *TypeClass) AddInstance(param Type, methods MethodSet, methodNames map[
 
 // Check if a type-class is declared as a sub-class of another type-class.
 func (tc *TypeClass) HasSuperClass(super *TypeClass) bool {
-	seen := util.NewIntDedupeMap()
+	seen := util.NewUintDedupeMap()
 	found := tc.hasSuperClass(seen, super.Id)
 	seen.Release()
 	return found
 }
 
-func (tc *TypeClass) hasSuperClass(seen util.IntDedupeMap, id int) bool {
+func (tc *TypeClass) hasSuperClass(seen util.UintDedupeMap, id uint) bool {
 	seen[tc.Id] = true
 	for superId, super := range tc.Super {
 		switch {
@@ -141,7 +148,7 @@ func (tc *TypeClass) hasSuperClass(seen util.IntDedupeMap, id int) bool {
 
 // Visit all instances for the type-class and all sub-classes. Sub-classes will be visited first.
 func (tc *TypeClass) FindInstance(found func(*Instance) bool) bool {
-	seen := util.NewIntDedupeMap()
+	seen := util.NewUintDedupeMap()
 	ok, _ := tc.findInstance(seen, found)
 	seen.Release()
 	return ok
@@ -151,7 +158,7 @@ func (tc *TypeClass) FindInstance(found func(*Instance) bool) bool {
 //
 // The type-parameter may reduce the number of instances visited in some cases, filtering out obvious non-matches.
 func (tc *TypeClass) MatchInstance(param Type, found func(*Instance) bool) (matched bool) {
-	seen := util.NewIntDedupeMap()
+	seen := util.NewUintDedupeMap()
 	switch param := param.(type) {
 	case *Const:
 		matched, _ = tc.matchConstInstance(param.Name, seen, found)
@@ -174,13 +181,13 @@ func (tc *TypeClass) MatchInstance(param Type, found func(*Instance) bool) (matc
 
 // Visit all instances for each of the type-class's top-most parents and all their (transitive) sub-classes. Sub-classes will be visited first.
 func (tc *TypeClass) FindInstanceFromRoots(found func(*Instance) bool) bool {
-	roots := make(map[int]*TypeClass, 16)
+	roots := make(map[uint]*TypeClass, 16)
 	tc.findRoots(roots)
 	var (
 		ok             bool
 		shouldContinue bool
 	)
-	seen := util.NewIntDedupeMap()
+	seen := util.NewUintDedupeMap()
 	for _, root := range roots {
 		if root == nil {
 			// not a root
@@ -194,7 +201,7 @@ func (tc *TypeClass) FindInstanceFromRoots(found func(*Instance) bool) bool {
 	return ok
 }
 
-func (tc *TypeClass) findRoots(roots map[int]*TypeClass) {
+func (tc *TypeClass) findRoots(roots map[uint]*TypeClass) {
 	if _, seen := roots[tc.Id]; seen {
 		return
 	}
@@ -208,7 +215,7 @@ func (tc *TypeClass) findRoots(roots map[int]*TypeClass) {
 	}
 }
 
-func (tc *TypeClass) findInstance(seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+func (tc *TypeClass) findInstance(seen util.UintDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
 	if seen[tc.Id] {
 		return false, true
 	}
@@ -226,7 +233,7 @@ func (tc *TypeClass) findInstance(seen util.IntDedupeMap, found func(*Instance) 
 	return false, true
 }
 
-func (tc *TypeClass) matchInstance(seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+func (tc *TypeClass) matchInstance(seen util.UintDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
 	if seen[tc.Id] {
 		return false, true
 	}
@@ -244,7 +251,7 @@ func (tc *TypeClass) matchInstance(seen util.IntDedupeMap, found func(*Instance)
 	return false, true
 }
 
-func (tc *TypeClass) matchConstInstance(name string, seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+func (tc *TypeClass) matchConstInstance(name string, seen util.UintDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
 	if seen[tc.Id] {
 		return false, true
 	}
@@ -263,7 +270,7 @@ func (tc *TypeClass) matchConstInstance(name string, seen util.IntDedupeMap, fou
 	return false, true
 }
 
-func (tc *TypeClass) matchAppConstInstance(name string, seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+func (tc *TypeClass) matchAppConstInstance(name string, seen util.UintDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
 	if seen[tc.Id] {
 		return false, true
 	}
@@ -283,7 +290,7 @@ func (tc *TypeClass) matchAppConstInstance(name string, seen util.IntDedupeMap, 
 	return false, true
 }
 
-func (tc *TypeClass) matchRecordInstance(seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+func (tc *TypeClass) matchRecordInstance(seen util.UintDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
 	if seen[tc.Id] {
 		return false, true
 	}
@@ -301,7 +308,7 @@ func (tc *TypeClass) matchRecordInstance(seen util.IntDedupeMap, found func(*Ins
 	return false, true
 }
 
-func (tc *TypeClass) matchVariantInstance(seen util.IntDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
+func (tc *TypeClass) matchVariantInstance(seen util.UintDedupeMap, found func(*Instance) bool) (ok, shouldContinue bool) {
 	if seen[tc.Id] {
 		return false, true
 	}

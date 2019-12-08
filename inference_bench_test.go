@@ -104,12 +104,12 @@ func BenchmarkRecursiveLet(b *testing.B) { // ~1900 ns/op
 	}
 }
 
-func BenchmarkInstanceLookups(t *testing.B) { // ~5100 ns/op
+func BenchmarkInstanceLookups(t *testing.B) { // ~15000 ns/op
 	env := NewTypeEnv(nil)
 	ctx := NewContext()
 
 	Functor, err := env.DeclareTypeClass("Functor", func(f *types.Var) types.MethodSet {
-		f.SetWeak()
+		f.RestrictConstVar()
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
 			"fmap": TArrow2(TArrow1(a, b), TApp(f, a), TApp(f, b)),
@@ -120,7 +120,7 @@ func BenchmarkInstanceLookups(t *testing.B) { // ~5100 ns/op
 	}
 
 	Applicative, err := env.DeclareTypeClass("Applicative", func(f *types.Var) types.MethodSet {
-		f.SetWeak()
+		f.RestrictConstVar()
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
 			"pure":  TArrow1(a, TApp(f, a)),
@@ -132,7 +132,7 @@ func BenchmarkInstanceLookups(t *testing.B) { // ~5100 ns/op
 	}
 
 	Monad, err := env.DeclareTypeClass("Monad", func(m *types.Var) types.MethodSet {
-		m.SetWeak()
+		m.RestrictConstVar()
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
 			"(>>=)": TArrow2(TApp(m, a), TArrow1(a, TApp(m, b)), TApp(m, b)),
@@ -156,18 +156,29 @@ func BenchmarkInstanceLookups(t *testing.B) { // ~5100 ns/op
 	}
 
 	env.Declare("itoa", TArrow1(TConst("int"), TConst("string")))
+	env.Declare("atoi", TArrow1(TConst("string"), TConst("int")))
 	env.Declare("someintoption", TApp(option, TConst("int")))
 
 	t.ResetTimer()
 
 	for n := 0; n < t.N; n++ {
-		expr := Call(Var("(>>=)"), Var("someintoption"), Func1("i", Call(Var("pure"), Call(Var("itoa"), Var("i")))))
+		var expr ast.Expr = Call(Var("(>>=)"), Var("someintoption"), Func1("i", Call(Var("pure"), Call(Var("itoa"), Var("i")))))
 		ty, err := ctx.Infer(expr, env)
 		if err != nil || ty == nil {
 			t.Fatal(err)
 		}
 
 		expr = Call(Var("fmap"), Var("itoa"), Var("someintoption"))
+		ty, err = ctx.Infer(expr, env)
+		if err != nil || ty == nil {
+			t.Fatal(err)
+		}
+
+		expr = Func1("x", Pipe("$", Var("x"),
+			Call(Var("(>>=)"), Var("$"), Func1("i", Call(Var("pure"), Call(Var("itoa"), Var("i"))))),
+			Call(Var("(>>=)"), Var("$"), Func1("s", Call(Var("pure"), Call(Var("atoi"), Var("s"))))),
+			Call(Var("(>>=)"), Var("$"), Func1("i", Call(Var("some"), Var("i"))))))
+
 		ty, err = ctx.Infer(expr, env)
 		if err != nil || ty == nil {
 			t.Fatal(err)

@@ -23,14 +23,17 @@
 package typeutil
 
 import (
+	"github.com/wdamron/poly/ast"
 	"github.com/wdamron/poly/types"
 )
 
+// Shadowed variables
 type StashedType struct {
 	Name string
 	Type types.Type
 }
 
+// Stashed type-variables (during speculative unification)
 type StashedLink struct {
 	v    *types.Var
 	prev types.Var
@@ -38,30 +41,62 @@ type StashedLink struct {
 
 func (l *StashedLink) Restore() { *l.v = l.prev }
 
+// Used for deferred instance matching (when multiple instances match)
+type DeferredConstraint struct {
+	Var  *types.Var
+	Expr ast.Expr
+}
+
 type CommonContext struct {
-	VarTracker VarTracker
-	EnvStash   []StashedType      // shadowed variables
-	LinkStash  []StashedLink      // stashed type-variables (during speculative unification)
-	InstLookup map[int]*types.Var // instantiation lookup for generic type-variables
-	Speculate  bool
+	VarTracker          VarTracker              // type-variables generated during inference
+	EnvStash            []StashedType           // shadowed variables
+	LinkStash           []StashedLink           // stashed type-variables (during speculative unification)
+	InstLookup          map[uint]*types.Var     // instantiation lookup for generic type-variables
+	VarScopes           map[string][]*ast.Scope // map from variable name to defining scope and shadowed scopes (stacked)
+	ScopeStack          []ast.Scope             // stack of nested binding scopes during inference
+	DeferredConstraints []DeferredConstraint    // deferred instance matching (when multiple instances match)
+	CurrentExpr         ast.Expr                // added to deferred constraints during unification for debugging
+
+	// modes:
+	Speculate                   bool // stash linked type-variables during unification
+	TrackScopes                 bool // track defining scopes for variables during inference
+	DeferredConstraintsEnabled  bool // allow deferred unification when multiple instances match
+	CheckingDeferredConstraints bool // prevent additional deferred constraints
 
 	// initial space:
-	_envStash  [32]StashedType
-	_linkStash [32]StashedLink
+	_envStash            [32]StashedType
+	_linkStash           [32]StashedLink
+	_deferredConstraints [64]DeferredConstraint
 }
 
 func (ctx *CommonContext) Init() {
-	ctx.EnvStash, ctx.LinkStash, ctx.InstLookup =
-		ctx._envStash[:0], ctx._linkStash[:0], make(map[int]*types.Var, 16)
+	if ctx.InstLookup != nil {
+		return
+	}
+	ctx.EnvStash, ctx.LinkStash = ctx._envStash[:0], ctx._linkStash[:0]
+	ctx.InstLookup = make(map[uint]*types.Var, 16)
+	ctx.DeferredConstraints = ctx._deferredConstraints[:0]
+	ctx.VarScopes = make(map[string][]*ast.Scope)
 }
 
 func (ctx *CommonContext) Reset() {
 	ctx.VarTracker.Reset()
+	ctx.TrackScopes, ctx.DeferredConstraintsEnabled = false, false
 	for i := range ctx._envStash {
 		ctx._envStash[i] = StashedType{}
 	}
-	ctx.EnvStash, ctx.LinkStash = ctx._envStash[:0], ctx._linkStash[:0]
+	for i := range ctx._envStash {
+		ctx._envStash[i] = StashedType{}
+	}
+	for i := range ctx._linkStash {
+		ctx._linkStash[i] = StashedLink{}
+	}
+	for i := range ctx.DeferredConstraints {
+		ctx.DeferredConstraints[i] = DeferredConstraint{}
+	}
+	ctx.EnvStash, ctx.LinkStash, ctx.DeferredConstraints = ctx._envStash[:0], ctx._linkStash[:0], ctx._deferredConstraints[:0]
 	ctx.ClearInstantiationLookup()
+	ctx.ResetScopeStack()
 }
 
 func (ctx *CommonContext) ClearInstantiationLookup() {
@@ -102,5 +137,44 @@ func (ctx *CommonContext) UnstashLinks(count int) {
 	stash := ctx.LinkStash
 	for i := len(stash) - 1; i > len(stash)-1-count; i-- {
 		stash[i].Restore()
+	}
+}
+
+func (ctx *CommonContext) ResetScopeStack() {
+	ctx.ScopeStack = nil
+}
+
+func (ctx *CommonContext) EnterScope(expr ast.Expr) {
+	if !ctx.TrackScopes {
+		return
+	}
+	var parent *ast.Scope
+	if len(ctx.ScopeStack) != 0 {
+		parent = &ctx.ScopeStack[len(ctx.ScopeStack)-1]
+	}
+	ctx.ScopeStack = append(ctx.ScopeStack, ast.Scope{expr, parent})
+}
+
+func (ctx *CommonContext) LeaveScope() {
+	if ctx.TrackScopes {
+		ctx.ScopeStack = ctx.ScopeStack[:len(ctx.ScopeStack)-1]
+	}
+}
+
+func (ctx *CommonContext) PushVarScope(name string) {
+	if ctx.TrackScopes {
+		ctx.VarScopes[name] = append(ctx.VarScopes[name], &ctx.ScopeStack[len(ctx.ScopeStack)-1])
+	}
+}
+
+func (ctx *CommonContext) PopVarScope(name string) {
+	if !ctx.TrackScopes {
+		return
+	}
+	scopes := ctx.VarScopes[name]
+	if len(scopes) == 1 {
+		delete(ctx.VarScopes, name)
+	} else {
+		ctx.VarScopes[name] = scopes[:len(scopes)-1]
 	}
 }

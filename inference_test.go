@@ -24,6 +24,7 @@ package poly_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	. "github.com/wdamron/poly"
@@ -58,7 +59,7 @@ func TestLiterals(t *testing.T) {
 
 	xvec := &ast.Literal{
 		Syntax: "[x]", Using: []string{"x"},
-		Construct: func(env types.TypeEnv, level int, using []types.Type) (types.Type, error) {
+		Construct: func(env types.TypeEnv, level uint, using []types.Type) (types.Type, error) {
 			return TApp(TConst("vec"), using[0]), nil // x :: int |- vec[int]
 		},
 	}
@@ -170,6 +171,75 @@ func TestAliases(t *testing.T) {
 	mustInfer(t, env, ctx, Call(Var("append"), Var("someints"), Var("someints")), "slice[int]")
 	mustInfer(t, env, ctx, Call(Var("append"), Var("someints"), Var("someints2")), "slice[int]")
 	mustInfer(t, env, ctx, Call(Var("append"), Var("someints2"), Var("someints3")), "slice[int]")
+}
+
+func TestVariableScopeAnnotations(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	expr := Func2("x", "y",
+		LetGroup([]ast.LetBinding{
+			{"a", Var("x")},
+			{"b", Var("y")},
+		},
+			Let("z", Var("a"),
+				Let("z2", Var("b"),
+					Let("z2", Var("b"),
+						Var("z2"))))))
+
+	if err := ctx.AnnotateDirect(expr, env); err != nil {
+		t.Fatal(err)
+	}
+
+	var seen []string
+	ast.WalkExpr(expr, func(e ast.Expr) {
+		if v, ok := e.(*ast.Var); ok {
+			if v.Scope() == nil {
+				t.Fatalf("nil scope annotation for %s", v.Name)
+			}
+			seen = append(seen, v.Name)
+			switch v.Name {
+			case "x", "y":
+				if _, ok := v.Scope().Expr.(*ast.Func); !ok {
+					t.Fatalf("wrong scope annotation for %s, found %s", v.Name, v.Scope().Expr.ExprName())
+				}
+
+			case "a", "b":
+				if _, ok := v.Scope().Expr.(*ast.LetGroup); !ok {
+					t.Fatalf("wrong scope annotation for %s, found %s", v.Name, v.Scope().Expr.ExprName())
+				}
+
+			case "z2":
+				if _, ok := v.Scope().Expr.(*ast.Let); !ok {
+					t.Fatalf("wrong scope annotation for %s, found %s", v.Name, v.Scope().Expr.ExprName())
+				}
+				if v.Scope().Parent == nil {
+					t.Logf("nil parent annotation for %s", v.Name)
+				}
+				if _, ok := v.Scope().Parent.Parent.Parent.Expr.(*ast.LetGroup); !ok {
+					t.Fatalf("wrong parent annotation for z2, found %s", v.Scope().Parent.Expr.ExprName())
+				}
+				if _, ok := v.Scope().Parent.Parent.Parent.Parent.Expr.(*ast.Func); !ok {
+					t.Fatalf("wrong scope annotation for top parent of z2, found %s", v.Scope().Expr.ExprName())
+				}
+			}
+		}
+	})
+
+	for i, name := range []string{"x", "y", "a", "b", "b", "z2"} {
+		if seen[i] != name {
+			t.Fatalf("not all variables were visited/checked: %#+v", seen)
+		}
+	}
+
+	env.Declare("x", TConst("int"))
+	varExpr := Var("x")
+	if err := ctx.AnnotateDirect(varExpr, env); err != nil {
+		t.Fatal(err)
+	}
+	if varExpr.Scope() != ast.PredeclaredScope {
+		t.Fatalf("expected predeclared scope")
+	}
 }
 
 func TestPipes(t *testing.T) {
@@ -462,12 +532,10 @@ func TestFixedPoint(t *testing.T) {
 	a = env.NewGenericVar()
 	env.Declare("merge", TArrow2(a, a, a))
 
+	// fix(fn (f) -> fn (x) -> merge(x, f(x)))
 	expr := Call(Var("fix"), Func1("f", Func1("x", Call(Var("merge"), Var("x"), Call(Var("f"), Var("x"))))))
 
 	mustInfer(t, env, ctx, expr, "'a -> 'a")
-	if ast.ExprString(expr) != "fix(fn (f) -> fn (x) -> merge(x, f(x)))" {
-		t.Fatalf("expr: %s", ast.ExprString(expr))
-	}
 
 	a = env.NewGenericVar()
 	env.Declare("if", TArrow3(TConst("bool"), a, a, a))
@@ -476,6 +544,7 @@ func TestFixedPoint(t *testing.T) {
 	env.Declare("less", TArrow2(TConst("int"), TConst("int"), TConst("bool")))
 	env.Declare("1", TConst("int"))
 
+	// fix(fn (fact) -> fn (n) -> if(less(n, 1), 1, mul(n, fact(sub(n, 1)))))
 	expr =
 		Call(Var("fix"), Func1("fact", Func1("n",
 			Call(Var("if"), Call(Var("less"), Var("n"), Var("1")),
@@ -483,9 +552,6 @@ func TestFixedPoint(t *testing.T) {
 				Call(Var("mul"), Var("n"), Call(Var("fact"), Call(Var("sub"), Var("n"), Var("1"))))))))
 
 	mustInfer(t, env, ctx, expr, "int -> int")
-	if ast.ExprString(expr) != "fix(fn (fact) -> fn (n) -> if(less(n, 1), 1, mul(n, fact(sub(n, 1)))))" {
-		t.Fatalf("expr: %s", ast.ExprString(expr))
-	}
 
 	// Record extension within recursive functions is not supported:
 	// fix(fn (f) -> fn (x) -> {i = 1 | f(x)})
@@ -698,6 +764,7 @@ func TestHigherKindedTypes(t *testing.T) {
 	//   fmap :: (('a -> 'b), 'f['a]) -> 'f['b]
 	Functor, err := env.DeclareTypeClass("Functor", func(f *types.Var) types.MethodSet {
 		f.SetWeak()
+		f.RestrictConstVar()
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
 			"fmap": TArrow2(TArrow1(a, b), TApp(f, a), TApp(f, b)),
@@ -712,6 +779,7 @@ func TestHigherKindedTypes(t *testing.T) {
 	//   (<*>) :: ('f[('a -> 'b)], 'f['a]) -> 'f['b]
 	Applicative, err := env.DeclareTypeClass("Applicative", func(f *types.Var) types.MethodSet {
 		f.SetWeak()
+		f.RestrictConstVar()
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
 			"pure":  TArrow1(a, TApp(f, a)),
@@ -726,6 +794,7 @@ func TestHigherKindedTypes(t *testing.T) {
 	//   (>>=) :: ('m['a], (a -> 'm['b])) -> 'm['b]
 	Monad, err := env.DeclareTypeClass("Monad", func(m *types.Var) types.MethodSet {
 		m.SetWeak()
+		m.RestrictConstVar()
 		a, b := env.NewGenericVar(), env.NewGenericVar()
 		return types.MethodSet{
 			"(>>=)": TArrow2(TApp(m, a), TArrow1(a, TApp(m, b)), TApp(m, b)),
@@ -774,6 +843,7 @@ func TestHigherKindedTypes(t *testing.T) {
 	}
 
 	env.Declare("itoa", TArrow1(TConst("int"), TConst("string")))
+	env.Declare("atoi", TArrow1(TConst("string"), TConst("int")))
 	env.Declare("someintoption", TApp(option, TConst("int")))
 
 	var expr ast.Expr = Call(Var("fmap"), Var("itoa"), Var("someintoption"))
@@ -784,6 +854,13 @@ func TestHigherKindedTypes(t *testing.T) {
 		t.Fatalf("expr: %s", ast.ExprString(expr))
 	}
 	mustInfer(t, env, ctx, expr, "Option[string]")
+
+	expr = Func1("x", Pipe("$", Var("x"),
+		Call(Var("(>>=)"), Var("$"), Func1("i", Call(Var("pure"), Call(Var("itoa"), Var("i"))))),
+		Call(Var("(>>=)"), Var("$"), Func1("s", Call(Var("pure"), Call(Var("atoi"), Var("s"))))),
+		Call(Var("(>>=)"), Var("$"), Func1("i", Call(Var("some"), Var("i"))))))
+
+	mustInfer(t, env, ctx, expr, "Option[int] -> Option[int]")
 
 	// fmap    :: (('a -> 'b),  'f['a]) ->  'f['b]
 	// ref_map :: (('a -> 'b), ref['a]) -> ref['b]
@@ -820,6 +897,94 @@ func TestHigherKindedTypes(t *testing.T) {
 	env.Declare("vec_ap", TArrow2(TApp(TConst("Vec"), TArrow1(a, b)), TApp(TConst("Vec"), a), TApp(TConst("Vec"), b)))
 	if _, err := env.DeclareInstance(Applicative, TConst("Vec"), map[string]string{"pure": "new_vec", "(<*>)": "vec_ap"}); err == nil {
 		t.Fatalf("expected invalid-instance error")
+	}
+}
+
+func TestUnionTypeClasses(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	ABC, err := env.DeclareUnionTypeClass("ABC", nil, map[string]types.Type{
+		"A": TConst("A"),
+		"B": TConst("B"),
+		"C": TConst("C"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	abc := env.NewQualifiedVar(types.InstanceConstraint{ABC})
+	env.Declare("fabc", TArrow1(abc, abc))
+	env.Declare("somea", TConst("A"))
+	env.Declare("someint", TConst("int"))
+
+	call := Call(Var("fabc"), Var("somea"))
+	mustInfer(t, env, ctx, call, "A")
+
+	// (built-in) cast to a tagged variant:
+	mustInfer(t, env, ctx, Var("ABC"), "ABC 'a => 'a -> [A : A, B : B, C : C]")
+
+	call = Call(Var("ABC"), Var("somea"))
+	mustInfer(t, env, ctx, call, "[A : A, B : B, C : C]")
+
+	match := Match(Call(Var("ABC"), Var("somea")),
+		[]ast.MatchCase{
+			{Label: "A", Var: "a", Value: Var("someint")},
+			{Label: "B", Var: "b", Value: Var("someint")},
+			{Label: "C", Var: "c", Value: Var("someint")},
+		},
+		// no default case:
+		nil)
+
+	mustInfer(t, env, ctx, match, "int")
+}
+
+func TestDeferredInstanceMatching(t *testing.T) {
+	env := NewTypeEnv(nil)
+	ctx := NewContext()
+
+	objA := TRecordFlat(map[string]types.Type{"x": TConst("A")})
+	objB := TRecordFlat(map[string]types.Type{"x": TConst("B")})
+
+	HasX, err := env.DeclareUnionTypeClass("HasX", nil, map[string]types.Type{
+		"A": objA,
+		"B": objB,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	env.Declare("objA", objA)
+	env.Declare("objB", objB)
+	env.Declare("a_id", TArrow1(TConst("A"), TConst("A")))
+
+	hasX := env.NewQualifiedVar(types.InstanceConstraint{HasX})
+	env.Declare("obj_id", TArrow1(hasX, hasX))
+
+	mustInfer(t, env, ctx, Var("obj_id"), "HasX 'a => 'a -> 'a")
+	mustInfer(t, env, ctx, Var("objA"), "{x : A}")
+	mustInfer(t, env, ctx, Call(Var("obj_id"), Var("objA")), "{x : A}")
+
+	// fn (x) -> let _ = obj_id({x = x}) in a_id(x)
+	expr := Func1("x",
+		Let("_", Call(Var("obj_id"), RecordExtend(RecordEmpty(), LabelValue("x", Var("x")))),
+			Call(Var("a_id"), Var("x"))))
+
+	if _, err = ctx.Infer(expr, env); err == nil {
+		t.Fatalf("unexpected match for type-class with missing context")
+	}
+	if !strings.Contains(err.Error(), "Instance cannot be determined") {
+		t.Fatalf("expected context error, found: %s", err.Error())
+	}
+	if ctx.InvalidExpr() == nil {
+		t.Fatalf("expected invalid expression to be retained")
+	}
+	if ast.ExprString(ctx.InvalidExpr()) != "obj_id({x = x})" {
+		t.Fatalf("invalid expr: %s", ast.ExprString(ctx.InvalidExpr()))
+	}
+
+	ctx.EnableDeferredInstanceMatching(true)
+	if _, err = ctx.Infer(expr, env); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -888,43 +1053,9 @@ func TestConstraints(t *testing.T) {
 	env.Declare("somefloatvec", TApp(TConst("vec"), floatType))
 	env.Declare("someboolvec", TApp(TConst("vec"), boolType))
 
-	// unions
-
-	ABC, err := env.DeclareUnionTypeClass("ABC", nil, map[string]types.Type{
-		"A": TConst("A"),
-		"B": TConst("B"),
-		"C": TConst("C"),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	abc := env.NewQualifiedVar(types.InstanceConstraint{ABC})
-	env.Declare("fabc", TArrow1(abc, abc))
-	env.Declare("somea", TConst("A"))
-
-	call := Call(Var("fabc"), Var("somea"))
-	mustInfer(t, env, ctx, call, "A")
-
-	// (built-in) cast to a tagged variant:
-	mustInfer(t, env, ctx, Var("ABC"), "ABC 'a => 'a -> [A : A, B : B, C : C]")
-
-	call = Call(Var("ABC"), Var("somea"))
-	mustInfer(t, env, ctx, call, "[A : A, B : B, C : C]")
-
-	match := Match(Call(Var("ABC"), Var("somea")),
-		[]ast.MatchCase{
-			{Label: "A", Var: "a", Value: Var("someint")},
-			{Label: "B", Var: "b", Value: Var("someint")},
-			{Label: "C", Var: "c", Value: Var("someint")},
-		},
-		// no default case:
-		nil)
-
-	mustInfer(t, env, ctx, match, "int")
-
 	// method-instance lookups
 
-	call = Call(Var("+"), Var("someint"), Var("someint"))
+	call := Call(Var("+"), Var("someint"), Var("someint"))
 	if err = ctx.AnnotateDirect(call, env); err != nil {
 		t.Fatal(err)
 	}

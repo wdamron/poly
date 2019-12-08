@@ -27,47 +27,35 @@ import (
 
 	"github.com/wdamron/poly/ast"
 	"github.com/wdamron/poly/internal/astutil"
-	"github.com/wdamron/poly/internal/typeutil"
 	"github.com/wdamron/poly/types"
 )
 
-// InferenceContext is a re-usable context for type inference.
+// InferenceContext is a reusable context for type inference.
 //
 // An inference context cannot be used concurrently.
 type InferenceContext struct {
-	common        typeutil.CommonContext
-	err           error
-	invalid       ast.Expr
-	rootExpr      ast.Expr
-	analysis      astutil.Analysis
-	letGroupCount int
-	initialized   bool
+	annotate      bool
+	canDeferMatch bool
 	analyzed      bool
 	needsReset    bool
-	annotate      bool
+
+	rootExpr      ast.Expr
+	analysis      *astutil.Analysis
+	letGroupCount int
+
+	err     error
+	invalid ast.Expr
 }
 
 // Create a new type-inference context. A context may be reused for inference.
-func NewContext() *InferenceContext {
-	ti := &InferenceContext{}
-	ti.init()
-	return ti
-}
-
-func (ti *InferenceContext) init() {
-	ti.analysis.Init()
-	ti.common.Init()
-	ti.initialized = true
-}
+func NewContext() *InferenceContext { return &InferenceContext{} }
 
 func (ti *InferenceContext) reset() {
 	if ti.analyzed {
 		ti.analysis.Reset()
 		ti.analyzed = false
 	}
-	ti.common.Reset()
-	ti.rootExpr, ti.err, ti.invalid, ti.letGroupCount, ti.needsReset =
-		nil, nil, nil, 0, false
+	ti.rootExpr, ti.err, ti.invalid, ti.letGroupCount, ti.needsReset = nil, nil, nil, 0, false
 }
 
 // Reset the state of the context. The context will be reset automatically before inference.
@@ -77,6 +65,13 @@ func (ti *InferenceContext) Reset() {
 	}
 	ti.reset()
 }
+
+// Deferred instance-matching may find matching type-classes when the surrounding context
+// does not initially contain enough information to determine a match. Deferred matching
+// may (or may not) lead to unsound types for previously inferred expressions.
+//
+// By default, deferred instance-matching is disabled.
+func (ti *InferenceContext) EnableDeferredInstanceMatching(enabled bool) { ti.canDeferMatch = enabled }
 
 // Get the error which caused inference to fail.
 func (ti *InferenceContext) Error() error { return ti.err }
@@ -129,19 +124,22 @@ func (ti *InferenceContext) inferRoot(root ast.Expr, env *TypeEnv, nocopy bool) 
 	if !nocopy {
 		root = ast.CopyExpr(root)
 	}
-	env = NewTypeEnv(env)
 	if ti.needsReset {
 		ti.reset()
-	} else if !ti.initialized {
-		ti.init()
 	}
-	ti.rootExpr, ti.common.VarTracker.NextId = root, env.NextVarId
+	ti.rootExpr, env.common.TrackScopes, env.common.DeferredConstraintsEnabled = root, ti.annotate, ti.canDeferMatch
 	t, err := ti.infer(env, types.TopLevel+1, root)
-	ti.needsReset, ti.rootExpr, env.NextVarId = true, nil, ti.common.VarTracker.NextId
 	if err != nil {
-		return root, t, err
+		goto Cleanup
 	}
+	if invalid, err := env.common.ApplyDeferredConstraints(); err != nil {
+		ti.invalid, ti.err = invalid, err
+		goto Cleanup
+	}
+	env.common.VarTracker.FlattenLinks()
 	t = Generalize(t)
-	ti.common.VarTracker.FlattenLinks()
-	return root, t, nil
+Cleanup:
+	env.common.Reset()
+	ti.needsReset, ti.rootExpr = true, nil
+	return root, t, ti.err
 }

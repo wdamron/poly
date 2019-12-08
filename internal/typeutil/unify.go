@@ -25,6 +25,7 @@ package typeutil
 import (
 	"errors"
 
+	"github.com/wdamron/poly/ast"
 	"github.com/wdamron/poly/types"
 )
 
@@ -32,7 +33,7 @@ import (
 // http://okmij.org/ftp/ML/generalization.html#levels
 //
 // This implementation follows the sound_eager algorithm.
-func (ctx *CommonContext) occursAdjustLevels(id, level int, t types.Type) error {
+func (ctx *CommonContext) occursAdjustLevels(id, level uint, t types.Type) error {
 	switch t := t.(type) {
 	case *types.Var:
 		switch {
@@ -44,7 +45,7 @@ func (ctx *CommonContext) occursAdjustLevels(id, level int, t types.Type) error 
 			if t.Id() == id {
 				return errors.New("Implicitly recursive types are not supported")
 			}
-			if t.Level() > level {
+			if t.LevelNum() > level {
 				if ctx.Speculate {
 					ctx.StashLink(t)
 				}
@@ -102,30 +103,63 @@ func (ctx *CommonContext) occursAdjustLevels(id, level int, t types.Type) error 
 	}
 }
 
-func (ctx *CommonContext) CanUnify(a, b types.Type) bool {
-	speculating := ctx.Speculate
+type UnifyTxn struct {
+	Speculate           bool
+	LinkStash           []StashedLink
+	DeferredConstraints []DeferredConstraint
+}
+
+func (ctx *CommonContext) NewUnifyTxn() UnifyTxn {
+	txn := UnifyTxn{ctx.Speculate, ctx.LinkStash, ctx.DeferredConstraints}
 	ctx.Speculate = true
-	stashedLinks := ctx.LinkStash
+	return txn
+}
+
+func (ctx *CommonContext) Rollback(txn UnifyTxn) {
+	ctx.UnstashLinks(len(ctx.LinkStash) - len(txn.LinkStash))
+	ctx.Speculate, ctx.LinkStash, ctx.DeferredConstraints = txn.Speculate, txn.LinkStash, txn.DeferredConstraints
+}
+
+func (ctx *CommonContext) Commit(txn UnifyTxn) {
+	ctx.Speculate, ctx.LinkStash = txn.Speculate, txn.LinkStash
+}
+
+func (ctx *CommonContext) CanUnify(a, b types.Type) bool {
+	txn := ctx.NewUnifyTxn()
 	err := ctx.Unify(a, b)
-	ctx.UnstashLinks(len(ctx.LinkStash) - len(stashedLinks))
-	ctx.Speculate, ctx.LinkStash = speculating, stashedLinks
+	ctx.Rollback(txn)
 	return err == nil
 }
 
 func (ctx *CommonContext) TryUnify(a, b types.Type) error {
-	speculating := ctx.Speculate
-	ctx.Speculate = true
-	stashedLinks := ctx.LinkStash
-	err := ctx.Unify(a, b)
-	if err != nil {
-		ctx.UnstashLinks(len(ctx.LinkStash) - len(stashedLinks))
+	txn := ctx.NewUnifyTxn()
+	if err := ctx.Unify(a, b); err != nil {
+		ctx.Rollback(txn)
+		return err
 	}
-	ctx.Speculate, ctx.LinkStash = speculating, stashedLinks
-	return err
+	ctx.Commit(txn)
+	return nil
+}
+
+func (ctx *CommonContext) ApplyDeferredConstraints() (invalidExpr ast.Expr, err error) {
+	ctx.CheckingDeferredConstraints = true
+	for _, c := range ctx.DeferredConstraints {
+		tv, link := c.Var, c.Var.Link()
+		if len(tv.Constraints()) == 0 {
+			continue
+		}
+		tv.UnsafeUnsetLink()
+		if err = ctx.Unify(tv, ctx.Instantiate(tv.LevelNum(), link)); err != nil {
+			invalidExpr = c.Expr
+			break
+		}
+	}
+	ctx.CheckingDeferredConstraints = false
+	return
 }
 
 func (ctx *CommonContext) applyConstraints(a *types.Var, b types.Type) error {
-	aConstraints := a.Constraints()
+	acs := a.Constraints()
 	bv, bIsVar := b.(*types.Var)
 	// Ensure size type-variables are only linked to size types (or other type-variables):
 	if a.IsSizeVar() && !bIsVar {
@@ -133,20 +167,26 @@ func (ctx *CommonContext) applyConstraints(a *types.Var, b types.Type) error {
 			return errors.New("Failed to unify size type-variable with " + b.TypeName())
 		}
 	}
-	if len(aConstraints) == 0 {
+	// Ensure constructor/constant type-variables are only linked to type constants (or other type-variables):
+	if a.IsConstVar() && !bIsVar {
+		if _, ok := b.(*types.Const); !ok {
+			return errors.New("Failed to unify constructor/constant type-variable with " + b.TypeName())
+		}
+	}
+	if len(acs) == 0 {
 		return nil
 	}
 	// If b is a type-variable, propagate instance constraints to b:
 	if bIsVar {
-		bConstraints := bv.Constraints()
+		bcs := bv.Constraints()
 		if ctx.Speculate {
 			// don't modify the existing slice of constraints
 			ctx.StashLink(bv)
-			bConstraintsTmp := make([]types.InstanceConstraint, len(bConstraints), len(bConstraints)+len(aConstraints))
-			copy(bConstraintsTmp, bConstraints)
-			bv.SetConstraints(bConstraintsTmp)
+			bcsTmp := make([]types.InstanceConstraint, len(bcs), len(bcs)+len(acs))
+			copy(bcsTmp, bcs)
+			bv.SetConstraints(bcsTmp)
 		}
-		for _, c := range aConstraints {
+		for _, c := range acs {
 			// Constraints which overlap or are subsumed will be eliminated:
 			bv.AddConstraint(c)
 		}
@@ -154,17 +194,43 @@ func (ctx *CommonContext) applyConstraints(a *types.Var, b types.Type) error {
 		return nil
 	}
 	// Eliminate instance constraints (find a matching instance for each type-class):
-	for _, c := range aConstraints {
+	for _, c := range acs {
 		// Overlapping instances are detected when they are declared. Overlap is only allowed
 		// between instances where one is a subclass of the other, and the search order ensures
-		// subclasses are visited first. The first matched instance is assumed to be the best
-		// match.
-		found := c.TypeClass.MatchInstance(b, func(inst *types.Instance) (found bool) {
-			err := ctx.TryUnify(b, ctx.Instantiate(a.Level(), inst.Param))
-			return err == nil
+		// sub-classes are visited first. If the linked type b unifies with multiple instances,
+		// overlap will be re-checked after inference during deferred unification (when enabled).
+		var firstMatch, lastMatch *types.Instance
+		overlapping := false
+		c.TypeClass.MatchInstance(b, func(inst *types.Instance) (done bool) {
+			if ctx.CanUnify(b, ctx.Instantiate(a.LevelNum(), inst.Param)) {
+				// Sub-classes are visited first:
+				if lastMatch != nil && !lastMatch.TypeClass.HasSuperClass(inst.TypeClass) {
+					overlapping = true
+				}
+				if firstMatch == nil {
+					firstMatch = inst
+				}
+				lastMatch = inst
+			}
+			return overlapping
 		})
-		if !found {
+		if firstMatch == nil {
 			return errors.New("No matching instance found for type-class " + c.TypeClass.Name)
+		}
+		if overlapping {
+			if ctx.CheckingDeferredConstraints || !ctx.DeferredConstraintsEnabled {
+				return errors.New("Instance cannot be determined from the context for type-class " + c.TypeClass.Name)
+			}
+			// Deferred constraints are applied after inference. Type-variables within the linked type b
+			// should not be generalized, to ensure constraints propagate during the deferred unification:
+			const forceGeneralize, weak = false, true
+			GeneralizeOpts(a.Level(), b, forceGeneralize, weak)
+			ctx.DeferredConstraints = append(ctx.DeferredConstraints, DeferredConstraint{a, ctx.CurrentExpr})
+			continue
+		}
+		// If only one matching instance is found, it can be safely unified with the candidate type (err should always be nil):
+		if err := ctx.Unify(b, ctx.Instantiate(a.LevelNum(), firstMatch.Param)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -231,14 +297,19 @@ func (ctx *CommonContext) Unify(a, b types.Type) error {
 				avar.SetWeak()
 			}
 			// propagate the size flag bi-directionally:
-			if avar.IsSizeVar() && !bvar.IsSizeVar() {
-				bvar.RestrictSizeVar()
-			} else if !avar.IsSizeVar() && bvar.IsSizeVar() {
-				avar.RestrictSizeVar()
+			switch {
+			case avar.IsRestrictedVar() && bvar.IsRestrictedVar():
+				if avar.RestrictedLevel() != bvar.RestrictedLevel() {
+					return errors.New("Failed to unify type-variables with different restrictions")
+				}
+			case avar.IsRestrictedVar():
+				bvar.Restrict(avar.Level())
+			case bvar.IsRestrictedVar():
+				avar.Restrict(bvar.Level())
 			}
 		}
 		// prevent cyclical types:
-		if err := ctx.occursAdjustLevels(avar.Id(), avar.Level(), b); err != nil {
+		if err := ctx.occursAdjustLevels(avar.Id(), avar.LevelNum(), b); err != nil {
 			return err
 		}
 		// propagate or eliminate type-class constraints:
@@ -466,7 +537,7 @@ func (ctx *CommonContext) unifyRows(a, b types.Type) error {
 			if !restA.IsUnboundVar() {
 				return errors.New("Invalid state while unifying type-variables for rows")
 			}
-			tv := ctx.VarTracker.New(restA.Level())
+			tv := ctx.VarTracker.New(restA.LevelNum())
 			ext := types.RowExtend{Row: tv, Labels: missingB.Build()}
 			if err := ctx.Unify(restB, &ext); err != nil {
 				return err

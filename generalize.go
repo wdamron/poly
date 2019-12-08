@@ -43,7 +43,7 @@ func GeneralizeRefs(t types.Type) types.Type {
 }
 
 // Generalize all unbound type-variables in t, excluding type-variables within mutable reference-types.
-func GeneralizeAtLevel(level int, t types.Type) types.Type {
+func GeneralizeAtLevel(level uint, t types.Type) types.Type {
 	return typeutil.GeneralizeOpts(level, t, true, false)
 }
 

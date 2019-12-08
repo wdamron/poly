@@ -26,7 +26,7 @@ import (
 	"github.com/wdamron/poly/types"
 )
 
-func (ctx *CommonContext) Instantiate(level int, t types.Type) types.Type {
+func (ctx *CommonContext) Instantiate(level uint, t types.Type) types.Type {
 	// Path compression:
 	t = types.RealType(t)
 	// Non-generic types can be shared:
@@ -38,7 +38,7 @@ func (ctx *CommonContext) Instantiate(level int, t types.Type) types.Type {
 	return t
 }
 
-func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
+func (ctx *CommonContext) visitInstantiate(level uint, t types.Type) types.Type {
 	// Path compression:
 	t = types.RealType(t)
 
@@ -54,11 +54,9 @@ func (ctx *CommonContext) visitInstantiate(level int, t types.Type) types.Type {
 			return tv
 		}
 		next := ctx.VarTracker.New(level)
+		next.Restrict(t.Level())
 		if t.IsWeakVar() {
 			next.SetWeak()
-		}
-		if t.IsSizeVar() {
-			next.RestrictSizeVar()
 		}
 		constraints := t.Constraints()
 		constraintsCopy := make([]types.InstanceConstraint, len(constraints))

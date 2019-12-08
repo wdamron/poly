@@ -46,6 +46,12 @@ type Block struct {
 	Sequence []Expr
 }
 
+// Check if b is the entry block for a control-flow graph.
+func (b *Block) IsEntry() bool { return b.Index == ControlFlowEntryIndex }
+
+// Check if b is the return block for a control-flow graph.
+func (b *Block) IsReturn() bool { return b.Index == ControlFlowReturnIndex }
+
 // Jump is a "goto" between a pair of blocks in a control-flow graph.
 type Jump struct {
 	// From and To are block indexes
@@ -141,13 +147,14 @@ func (e *ControlFlow) HasJump(from, to Block) bool {
 // The strongly connected components of the control-flow graph will be returned in dependency order.
 //
 // If annotate is true, the strongly connected componenents will be cached in e.
-func (e *ControlFlow) Validate(annotate bool) ([][]Block, error) {
+// If e has already been validated with annotation enabled, a cached result will be returned.
+func (e *ControlFlow) Validate(annotate bool) (sccs [][]Block, err error) {
 	if len(e.sccs) != 0 {
 		return e.sccs, nil
 	}
 	// Loops are detected through SCC analysis and inferred as recursive functions.
 	// Blocks are inferred in dependency order.
-	sccs := e.StronglyConnectedComponents()
+	sccs = e.StronglyConnectedComponents()
 	if len(sccs) < 2 {
 		return nil, errors.New("Control flow must reach the entry and return blocks")
 	}
@@ -159,7 +166,7 @@ func (e *ControlFlow) Validate(annotate bool) ([][]Block, error) {
 	}
 	// Ensure all blocks and cycles in the strongly connected components for e reach the return block,
 	// directly or transitively:
-	if err := e.checkReturnReachability(sccs); err != nil {
+	if err = e.checkReturnReachability(sccs); err != nil {
 		return nil, err
 	}
 	if annotate {
@@ -188,6 +195,8 @@ func (g *smallGraph) Release() {
 // Cycles of blocks will be returned in dependency order.
 // Cycles containing a single block may or may not be a cycle; a block is a cycle
 // if the control-flow graph has a jump from that block to itself.
+//
+// If e has already been validated with annotation enabled, a cached result will be returned.
 func (e *ControlFlow) StronglyConnectedComponents() [][]Block {
 	if len(e.sccs) != 0 {
 		return e.sccs
@@ -203,22 +212,14 @@ func (e *ControlFlow) StronglyConnectedComponents() [][]Block {
 		small = graphPool.Get().(*smallGraph)
 		graph = small[:numVerts]
 	}
-	entryBlock := len(graph) - 2
-	returnBlock := len(graph) - 1
 	for _, j := range e.Jumps {
 		// Map block indexes to (non-negative) temporary indexes:
 		from, to := j.From, j.To
-		switch from {
-		case ControlFlowEntryIndex:
-			from = entryBlock
-		case ControlFlowReturnIndex:
-			from = returnBlock
+		if from < 0 {
+			from = len(graph) + from
 		}
-		switch to {
-		case ControlFlowEntryIndex:
-			to = entryBlock
-		case ControlFlowReturnIndex:
-			to = returnBlock
+		if to < 0 {
+			to = len(graph) + to
 		}
 		graph.AddEdge(from, to)
 	}
@@ -232,9 +233,9 @@ func (e *ControlFlow) StronglyConnectedComponents() [][]Block {
 		cycle := make([]Block, len(vs))
 		for j, v := range vs {
 			switch v {
-			case entryBlock:
+			case len(graph) + ControlFlowEntryIndex:
 				cycle[j] = e.Entry
-			case returnBlock:
+			case len(graph) + ControlFlowReturnIndex:
 				cycle[j] = e.Return
 			default:
 				cycle[j] = e.Blocks[v]
@@ -283,11 +284,11 @@ func (e *ControlFlow) checkReturnReachabilityLarge(stronglyConnectedComponents [
 	}
 	for _, cycle := range stronglyConnectedComponents {
 		for _, block := range cycle {
-			if block.Index == ControlFlowEntryIndex {
+			if block.IsEntry() {
 				if entryReachesReturn {
 					continue
 				}
-			} else if block.Index == ControlFlowReturnIndex || reachesReturn[block.Index] {
+			} else if block.IsReturn() || reachesReturn[block.Index] {
 				continue
 			}
 			return errors.New("Control flow contains blocks which do not reach the return block")
@@ -327,11 +328,11 @@ func (e *ControlFlow) checkReturnReachabilitySmall(stronglyConnectedComponents [
 	}
 	for _, cycle := range stronglyConnectedComponents {
 		for _, block := range cycle {
-			if block.Index == ControlFlowEntryIndex {
+			if block.IsEntry() {
 				if entryReachesReturn {
 					continue
 				}
-			} else if block.Index == ControlFlowReturnIndex || hasBit(reachesReturn, block.Index) {
+			} else if block.IsReturn() || hasBit(reachesReturn, block.Index) {
 				continue
 			}
 			return errors.New("Control flow contains blocks which do not reach the return block")

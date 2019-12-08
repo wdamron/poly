@@ -33,7 +33,7 @@ import (
 func TUnit() *types.Unit { return types.NewUnit() }
 
 // Create a new type-variable with the given id and binding-level.
-func TVar(id, level int) *types.Var {
+func TVar(id, level uint) *types.Var {
 	return types.NewVar(id, level)
 }
 
@@ -125,7 +125,7 @@ func TRowEmpty() *types.RowEmpty {
 
 // Expressions:
 
-func Literal(syntax string, usingVars []string, constructType func(env types.TypeEnv, level int, using []types.Type) (types.Type, error)) *ast.Literal {
+func Literal(syntax string, usingVars []string, constructType func(env types.TypeEnv, level uint, using []types.Type) (types.Type, error)) *ast.Literal {
 	return &ast.Literal{Syntax: syntax, Construct: constructType}
 }
 

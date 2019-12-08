@@ -26,17 +26,17 @@ import (
 	"sync"
 )
 
-var intDedupePool = sync.Pool{
-	New: func() interface{} { return make(IntDedupeMap, 32) },
+var uintDedupePool = sync.Pool{
+	New: func() interface{} { return make(UintDedupeMap, 32) },
 }
 
-type IntDedupeMap map[int]bool
+type UintDedupeMap map[uint]bool
 
-func NewIntDedupeMap() IntDedupeMap { return intDedupePool.Get().(IntDedupeMap) }
+func NewUintDedupeMap() UintDedupeMap { return uintDedupePool.Get().(UintDedupeMap) }
 
-func (dm IntDedupeMap) Release() {
+func (dm UintDedupeMap) Release() {
 	for k := range dm {
 		delete(dm, k)
 	}
-	intDedupePool.Put(dm)
+	uintDedupePool.Put(dm)
 }

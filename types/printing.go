@@ -32,8 +32,8 @@ import (
 var printerPool = sync.Pool{
 	New: func() interface{} {
 		p := &typePrinter{
-			idNames: make(map[int]string, 16),
-			preds:   make(map[int][]string, 16),
+			idNames: make(map[uint]string, 16),
+			preds:   make(map[uint][]string, 16),
 		}
 		p.order = p._order[:0]
 		return p
@@ -99,10 +99,10 @@ func TypeString(t Type) string {
 }
 
 type typePrinter struct {
-	idNames map[int]string
-	preds   map[int][]string
-	order   []int
-	_order  [16]int
+	idNames map[uint]string
+	preds   map[uint][]string
+	order   []uint
+	_order  [16]uint
 	sb      strings.Builder
 }
 
@@ -121,25 +121,25 @@ func init() {
 	}
 }
 
-func getVarName(i int) string {
-	if i < len(_names) {
+func getVarName(i uint) string {
+	if i < uint(len(_names)) {
 		return _names[i]
 	}
 	if i >= 26 {
-		return "'" + string(byte(97+i%26)) + strconv.Itoa(i/26)
+		return "'" + string(byte(97+i%26)) + strconv.Itoa(int(i/26))
 	}
 	return "'" + string(byte(97+i%26))
 }
 
-func getUnboundVarName(i int) string {
-	if i < len(_unboundNames) {
+func getUnboundVarName(i uint) string {
+	if i < uint(len(_unboundNames)) {
 		return _unboundNames[i]
 	}
-	return "'_" + strconv.Itoa(i)
+	return "'_" + strconv.Itoa(int(i))
 }
 
 func (p *typePrinter) nextName() string {
-	return getVarName(len(p.idNames))
+	return getVarName(uint(len(p.idNames)))
 }
 
 func typeString(p *typePrinter, simple bool, t Type) {
@@ -157,7 +157,7 @@ func typeString(p *typePrinter, simple bool, t Type) {
 		switch {
 		case t.IsUnboundVar():
 			if len(p.idNames) == 0 {
-				p.idNames = make(map[int]string)
+				p.idNames = make(map[uint]string)
 			} else if name, ok := p.idNames[t.Id()]; ok {
 				p.sb.WriteString(name)
 				return
@@ -171,7 +171,7 @@ func typeString(p *typePrinter, simple bool, t Type) {
 
 		case t.IsGenericVar():
 			if len(p.idNames) == 0 {
-				p.idNames = make(map[int]string)
+				p.idNames = make(map[uint]string)
 			} else if name, ok := p.idNames[t.Id()]; ok {
 				p.sb.WriteString(name)
 				return
@@ -180,20 +180,23 @@ func typeString(p *typePrinter, simple bool, t Type) {
 			p.idNames[t.Id()] = name
 			p.sb.WriteString(name)
 		}
-		if len(t.constraints) == 0 && !t.IsWeakVar() && !t.IsSizeVar() {
+		if len(t.constraints) == 0 && !t.IsWeakVar() && !t.IsRestrictedVar() {
 			return
 		}
 		if p.preds != nil && len(p.preds[t.Id()]) > 0 {
 			return
 		} else if p.preds == nil {
-			p.preds = make(map[int][]string)
+			p.preds = make(map[uint][]string)
 		}
 		preds := make([]string, 0, len(t.constraints)+2) // space for [weak, size]
 		if t.IsWeakVar() {
 			preds = append(preds, "weak")
 		}
-		if t.IsSizeVar() {
+		switch {
+		case t.IsSizeVar():
 			preds = append(preds, "size")
+		case t.IsConstVar():
+			preds = append(preds, "const")
 		}
 		for _, c := range t.constraints {
 			preds = append(preds, c.TypeClass.Name)

@@ -31,9 +31,10 @@ const (
 	WeakVarLevel = 1 << 29
 
 	// Restricted levels (0x01...0x1f) << 24:
-	SizeVarLevel = 1 << 24
+	SizeVarLevel  = 1 << 24
+	ConstVarLevel = 2 << 24
 
-	RestrictedLevelMask = 0x1f << 24
+	RestrictedVarLevelsMask = 0x1f << 24
 )
 
 var _ Type = (*Var)(nil)
@@ -42,31 +43,29 @@ var _ Type = (*Var)(nil)
 type Var struct {
 	constraints []InstanceConstraint
 	link        Type
-	id          int32
+	id          uint
 	level       uint32
+	_           uint32
 }
 
 // Create a new type-variable with the given id and binding-level.
-func NewVar(id, level int) *Var {
-	return &Var{id: int32(id), level: uint32(level)}
+func NewVar(id, level uint) *Var {
+	return &Var{id: id, level: uint32(level)}
 }
 
 // Create a new generic type-variable.
-func NewGenericVar(id int) *Var {
-	return &Var{id: int32(id), level: GenericVarLevel}
+func NewGenericVar(id uint) *Var {
+	return &Var{id: id, level: GenericVarLevel}
 }
 
-// Constraints returns the set of type-classes which the type-variable must implement.
-func (tv *Var) Constraints() []InstanceConstraint { return tv.constraints }
-
 // Id returns the unique identifier of the type-variable.
-func (tv *Var) Id() int { return int(tv.id) }
+func (tv *Var) Id() uint { return tv.id }
 
 // Level returns the adjusted binding-level of the type-variable, with flag levels included.
-func (tv *Var) Level() int { return int(tv.level) }
+func (tv *Var) Level() uint { return uint(tv.level) }
 
 // Level returns the adjusted binding-level of the type-variable, with flag levels excluded.
-func (tv *Var) LevelNum() int { return int(tv.levelNum()) }
+func (tv *Var) LevelNum() uint { return uint(tv.levelNum()) }
 
 func (tv *Var) levelNum() uint32 { return tv.level &^ (0xff << 24) }
 
@@ -77,37 +76,57 @@ func (tv *Var) IsUnboundVar() bool    { return tv.level&(GenericVarLevel|LinkVar
 func (tv *Var) IsLinkVar() bool       { return tv.level&LinkVarLevel != 0 }
 func (tv *Var) IsGenericVar() bool    { return tv.level&GenericVarLevel != 0 }
 func (tv *Var) IsWeakVar() bool       { return tv.level&WeakVarLevel != 0 }
-func (tv *Var) IsSizeVar() bool       { return tv.level&RestrictedLevelMask == SizeVarLevel }
-func (tv *Var) IsRestrictedVar() bool { return tv.level&RestrictedLevelMask != 0 }
+func (tv *Var) IsSizeVar() bool       { return tv.level&RestrictedVarLevelsMask == SizeVarLevel }
+func (tv *Var) IsConstVar() bool      { return tv.level&RestrictedVarLevelsMask == ConstVarLevel }
+func (tv *Var) IsRestrictedVar() bool { return tv.level&RestrictedVarLevelsMask != 0 }
 
 // Set the binding-level of the type-variable to the generic level.
 func (tv *Var) SetGeneric() {
-	tv.level = tv.levelNum() | (tv.level & (RestrictedLevelMask | WeakVarLevel)) | GenericVarLevel
+	tv.level = tv.levelNum() | (tv.level & (RestrictedVarLevelsMask | WeakVarLevel)) | GenericVarLevel
 }
 
 // Set the binding-level of the type-variable to the weak level. Weak type-variables may not be generalized.
 func (tv *Var) SetWeak() {
-	tv.level = tv.levelNum() | (tv.level & (RestrictedLevelMask | GenericVarLevel)) | WeakVarLevel
+	tv.level = tv.levelNum() | (tv.level & (RestrictedVarLevelsMask | GenericVarLevel)) | WeakVarLevel
 }
 
 // Set the unique identifier of the type-variable.
-func (tv *Var) SetId(id int) { tv.id = int32(id) }
+func (tv *Var) SetId(id uint) { tv.id = id }
 
 // Set the adjusted binding-level of the type-variable, with existing flags retained.
-func (tv *Var) SetLevelNum(level int) {
-	tv.level = (uint32(level) &^ (0xff << 24)) | (tv.level & 0xff << 24)
+func (tv *Var) SetLevelNum(level uint) {
+	tv.level = (uint32(level) &^ (0xff << 24)) | (tv.level & (0xff << 24))
 }
 
 // Set the type which the type-variable is bound to.
 func (tv *Var) SetLink(t Type) {
 	tv.link = t
-	tv.level = tv.levelNum() | (tv.level & RestrictedLevelMask) | LinkVarLevel
+	tv.level = tv.levelNum() | (tv.level & RestrictedVarLevelsMask) | LinkVarLevel
+}
+
+// Unset the type which the type-variable is bound to.
+func (tv *Var) UnsafeUnsetLink() {
+	tv.link = nil
+	tv.level &^= LinkVarLevel
 }
 
 // Restrict t as a size type-variable. Size type-variables may only unify with size types.
 func (tv *Var) RestrictSizeVar() {
-	tv.level = (tv.level &^ RestrictedLevelMask) | SizeVarLevel
+	tv.level = (tv.level &^ RestrictedVarLevelsMask) | SizeVarLevel
 }
+
+// Restrict t as a constructor/constant type-variable. Constructor/constant type-variables may only unify with type constants.
+func (tv *Var) RestrictConstVar() {
+	tv.level = (tv.level &^ RestrictedVarLevelsMask) | ConstVarLevel
+}
+
+// Restrict t as a constructor/constant type-variable. Constructor/constant type-variables may only unify with type constants.
+func (tv *Var) Restrict(restrictedLevel uint) {
+	tv.level = (tv.level &^ RestrictedVarLevelsMask) | (uint32(restrictedLevel) & RestrictedVarLevelsMask)
+}
+
+// Level returns the masked level of tv, with only the restricted level included (if any).
+func (tv *Var) RestrictedLevel() uint { return uint(tv.level & RestrictedVarLevelsMask) }
 
 // Constrain the type-variable to types which implement a set of type-classes.
 func (tv *Var) SetConstraints(constraints []InstanceConstraint) { tv.constraints = constraints }
@@ -124,6 +143,20 @@ func (tv *Var) AddConstraint(constraint InstanceConstraint) {
 		}
 	}
 	tv.constraints = append(tv.constraints, constraint)
+}
+
+// Constraints returns the set of type-classes which the type-variable must implement.
+func (tv *Var) Constraints() []InstanceConstraint {
+	for {
+		if !tv.IsLinkVar() {
+			return tv.constraints
+		}
+		if link, ok := tv.Link().(*Var); ok {
+			tv = link
+			continue
+		}
+		return tv.constraints
+	}
 }
 
 // Flatten a chain of linked type-variables. Predicates for type-variables with qualified types

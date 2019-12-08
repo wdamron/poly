@@ -25,6 +25,7 @@ package poly
 import (
 	"errors"
 
+	"github.com/wdamron/poly/ast"
 	"github.com/wdamron/poly/internal/typeutil"
 	"github.com/wdamron/poly/internal/util"
 	"github.com/wdamron/poly/types"
@@ -36,16 +37,14 @@ import (
 // across threads, create a new type-environment for each thread which inherits from the
 // shared environment.
 type TypeEnv struct {
-	// Next unused type-variable id
-	NextVarId int
-	// Predeclared types in the parent of the current type-environment
-	Parent *TypeEnv
 	// Mappings from identifiers to declared types in the current type-environment
 	Types map[string]types.Type
 	// Type-classes declared in the current type-environment
 	TypeClasses map[string]*types.TypeClass
+	// Predeclared types in the parent of the current type-environment
+	Parent *TypeEnv
 
-	common *typeutil.CommonContext
+	common typeutil.CommonContext
 }
 
 // Create a type-environment. The new environment will inherit bindings from the parent, if the parent is not nil.
@@ -58,20 +57,24 @@ func NewTypeEnv(parent *TypeEnv) *TypeEnv {
 		Parent: parent,
 		Types:  make(map[string]types.Type),
 	}
+	env.common.Init()
 	if parent != nil {
-		env.NextVarId = parent.NextVarId
+		env.common.VarTracker.NextId = parent.common.VarTracker.NextId
 	}
 	return env
 }
 
-func (e *TypeEnv) freshId() int {
-	id := e.NextVarId
-	e.NextVarId++
+// Get the id which will be assigned to the next type-variable generated within the type-environment.
+func (e *TypeEnv) NextVarId() uint { return e.common.VarTracker.NextId }
+
+func (e *TypeEnv) freshId() uint {
+	id := e.common.VarTracker.NextId
+	e.common.VarTracker.NextId++
 	return id
 }
 
 // Create a unbound type-variable with a unique id at a given binding-level.
-func (e *TypeEnv) NewVar(level int) *types.Var { return types.NewVar(e.freshId(), level) }
+func (e *TypeEnv) NewVar(level uint) *types.Var { return types.NewVar(e.freshId(), level) }
 
 // Create a generic type-variable with a unique id.
 func (e *TypeEnv) NewGenericVar() *types.Var { return types.NewGenericVar(e.freshId()) }
@@ -159,10 +162,24 @@ func (e *TypeEnv) Lookup(name string) types.Type {
 	return e.Parent.Lookup(name)
 }
 
+func (e *TypeEnv) scopeLookup(name string) (types.Type, *ast.Scope) {
+	if t, ok := e.Types[name]; ok {
+		scopes := e.common.VarScopes[name]
+		if len(scopes) == 0 {
+			return t, ast.PredeclaredScope
+		}
+		return t, scopes[len(scopes)-1]
+	}
+	if e.Parent == nil {
+		return nil, nil
+	}
+	return e.Parent.scopeLookup(name)
+}
+
 // Instantiate a type at a given let-binding level. Instantiation should only occur indirectly during inference.
 //
 // Literal expressions may need to instantiate types at the level they are being instantiated at.
-func (e *TypeEnv) Instantiate(level int, t types.Type) types.Type {
+func (e *TypeEnv) Instantiate(level uint, t types.Type) types.Type {
 	return e.common.Instantiate(level, t)
 }
 
@@ -232,16 +249,20 @@ func (e *TypeEnv) DeclareUnionTypeClass(name string, bind func(*types.Var), inst
 	if err != nil {
 		return nil, err
 	}
-	for _, inst := range instances {
-		if _, err := e.DeclareInstance(tc, inst, map[string]string{}); err != nil {
+	tc.Union = make(map[string]*types.Instance, len(instances))
+	for label, param := range instances {
+		inst, err := e.DeclareInstance(tc, param, map[string]string{})
+		if err != nil {
 			return nil, err
 		}
+		tc.Union[label] = inst
+	}
+	tc.UnionVariant = &types.Variant{
+		Row: &types.RowExtend{Labels: types.NewFlatTypeMap(instances), Row: types.RowEmptyPointer},
 	}
 	e.Declare(name, &types.Arrow{
-		Args: []types.Type{e.NewQualifiedVar(types.InstanceConstraint{tc})},
-		Return: &types.Variant{
-			Row: &types.RowExtend{Labels: types.NewFlatTypeMap(instances), Row: types.RowEmptyPointer},
-		},
+		Args:   []types.Type{e.NewQualifiedVar(types.InstanceConstraint{tc})},
+		Return: tc.UnionVariant,
 	})
 	return tc, nil
 }
@@ -302,17 +323,13 @@ func (e *TypeEnv) DeclareInstance(tc *types.TypeClass, param types.Type, methodN
 		}
 		impls[name] = arrow
 	}
-	if e.common == nil {
-		e.common = &typeutil.CommonContext{}
-		e.common.Init()
-	}
 	param = GeneralizeRefs(param)
 	inst := tc.AddInstance(param, impls, methodNames)
-	seen := util.NewIntDedupeMap()
+	seen := util.NewUintDedupeMap()
 	err := e.checkSatisfies(tc, param, impls, seen)
 	seen.Release()
 	e.common.VarTracker.FlattenLinks()
-	e.common.VarTracker.ResetKeepId()
+	e.common.VarTracker.Reset()
 	if err != nil {
 		tc.Instances = tc.Instances[:len(tc.Instances)-1]
 		return nil, err
@@ -329,10 +346,6 @@ func (e *TypeEnv) FindMethodInstance(arrow *types.Arrow) *types.Instance {
 	if method == nil {
 		return nil
 	}
-	if e.common == nil {
-		e.common = &typeutil.CommonContext{}
-		e.common.Init()
-	}
 	var match *types.Instance
 	method.TypeClass.FindInstance(func(inst *types.Instance) bool {
 		if !e.common.CanUnify(e.common.Instantiate(0, arrow), e.common.Instantiate(0, inst.Methods[method.Name])) {
@@ -344,7 +357,7 @@ func (e *TypeEnv) FindMethodInstance(arrow *types.Arrow) *types.Instance {
 	return match
 }
 
-func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodImpls types.MethodSet, seen util.IntDedupeMap) error {
+func (e *TypeEnv) checkSatisfies(tc *types.TypeClass, param types.Type, methodImpls types.MethodSet, seen util.UintDedupeMap) error {
 	for name, def := range tc.Methods {
 		impl, ok := methodImpls[name]
 		if !ok || len(def.Args) != len(impl.Args) {

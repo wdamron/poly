@@ -55,16 +55,15 @@ func (vs VarList) Tail() VarList {
 
 // VarTracker allocates type-variables and tracks allocations.
 type VarTracker struct {
-	NextId int
+	NextId uint
 	count  int
 	head   *varList
 	block  []varList
 }
 
-func (vt *VarTracker) List() VarList { return VarList{length: vt.count, list: vt.head} }
+func (vt *VarTracker) Reset() { vt.count, vt.head, vt.block = 0, nil, nil }
 
-func (vt *VarTracker) Reset()       { vt.NextId, vt.count, vt.head, vt.block = 0, 0, nil, nil }
-func (vt *VarTracker) ResetKeepId() { vt.count, vt.head, vt.block = 0, nil, nil }
+func (vt *VarTracker) List() VarList { return VarList{length: vt.count, list: vt.head} }
 
 func (vt *VarTracker) FlattenLinks() {
 	for nd := vt.head; nd != nil; nd = nd.tail {
@@ -72,7 +71,7 @@ func (vt *VarTracker) FlattenLinks() {
 	}
 }
 
-func (vt *VarTracker) New(level int) *types.Var {
+func (vt *VarTracker) New(level uint) *types.Var {
 	if len(vt.block) == 0 {
 		vt.block = make([]varList, 8)
 	}
@@ -86,7 +85,7 @@ func (vt *VarTracker) New(level int) *types.Var {
 	return tv
 }
 
-func (vt *VarTracker) NewList(level, count int) VarList {
+func (vt *VarTracker) NewList(level uint, count int) VarList {
 	for i := 0; i < count; i++ {
 		_ = vt.New(level)
 	}
