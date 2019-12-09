@@ -77,6 +77,7 @@ func TestDominators(t *testing.T) {
 }
 
 func TestDominanceFrontiers(t *testing.T) {
+	// http://pages.cs.wisc.edu/~fischer/cs701.f05/lectures/Lecture22.pdf
 	const (
 		A = iota
 		B
@@ -170,10 +171,16 @@ func TestDominanceMisc(t *testing.T) {
 
 	expectDoms := []int{0, 0, 1, 1, 3, 3, 3, 6, 0}
 	expectFrontiers := [][]int{{}, {8}, {3}, {2, 8}, {6}, {6}, {2, 8}, {8}, {}}
-	expectControlDeps := [][]int{{1, 2, 3, 4, 5, 6, 7}, {2, 3, 6}, nil, nil, nil, nil, nil, nil, nil}
+	expectControlDeps := [][]int{
+		0: {1, 3, 6, 7},
+		1: {2},
+		3: {4, 5},
+		6: {2, 3, 6},
+		8: nil,
+	}
 
 	frontiers, tree := g.AnalyzeDominators(0)
-	_, _, controlDeps := g.ControlDependencies(len(g) - 1)
+	_, _, controlDeps := g.ControlDependencies(8)
 
 	for dominee, idom := range expectDoms {
 		if tree.Idom(dominee) != expectDoms[dominee] {
@@ -313,11 +320,135 @@ func TestControlDependencies(t *testing.T) {
 		3:  {4, 5},
 		9:  {10},
 		11: {9, 11},
-		12: {2, 8, 9, 11},
+		12: {2, 8, 9, 11, 12},
 		13: nil,
 	}
 
-	_, _, controlDeps := g.ControlDependencies(13)
+	ipostdoms, frontiers, controlDeps := g.ControlDependencies(13)
+
+	t.Logf("ipostdoms: %#+v", ipostdoms)
+	t.Logf("frontiers: %#+v", frontiers)
+
+	for i := range expectControlDeps {
+		if len(controlDeps[i]) != len(expectControlDeps[i]) {
+			t.Logf("ctrl: %#+v", controlDeps)
+			t.Logf("exp:  %#+v", expectControlDeps)
+			t.Fail()
+			break
+		}
+		// frontiers are sorted:
+		for j := range expectControlDeps[i] {
+			if controlDeps[i][j] != expectControlDeps[i][j] {
+				t.Logf("ctrl: %#+v", controlDeps)
+				t.Logf("exp:  %#+v", expectControlDeps)
+				t.Fail()
+				break
+			}
+		}
+	}
+}
+
+func TestPostdominators(t *testing.T) {
+	// http://pages.cs.wisc.edu/~fischer/cs701.f05/lectures/Lecture22.pdf
+	const (
+		A = iota
+		B
+		C
+		D
+		E
+		F
+	)
+
+	g := Graph{
+		A: {B, F},
+		B: {C, D},
+		C: {E},
+		D: {E},
+		E: {F},
+		F: {},
+	}
+
+	ipostdoms, frontiers, _ := g.ControlDependencies(5)
+
+	expectPostdoms := []int{
+		A: F,
+		B: E,
+		C: E,
+		D: E,
+		E: F,
+		F: F,
+	}
+
+	expectFrontiers := [][]int{
+		A: {},
+		B: {A},
+		C: {B},
+		D: {B},
+		E: {A},
+		F: {},
+	}
+
+	for i := range ipostdoms {
+		if ipostdoms[i] != expectPostdoms[i] {
+			t.Fatalf("unexpected dominators: %#+v", ipostdoms)
+		}
+	}
+
+	for i := range expectFrontiers {
+		if len(frontiers[i]) != len(expectFrontiers[i]) {
+			t.Logf("frontier: %#+v", frontiers)
+			t.Logf("exp:      %#+v", expectFrontiers)
+			t.Fail()
+			break
+		}
+		// frontiers are sorted:
+		for j := range expectFrontiers[i] {
+			if frontiers[i][j] != expectFrontiers[i][j] {
+				t.Logf("frontier: %#+v", frontiers)
+				t.Logf("exp:      %#+v", expectFrontiers)
+				t.Fail()
+				break
+			}
+		}
+	}
+}
+
+func TestControlDependencies2(t *testing.T) {
+	// http://pages.cs.wisc.edu/~fischer/cs701.f05/lectures/Lecture22.pdf
+	const (
+		A = iota
+		B
+		C
+		D
+		E
+		F
+		G
+		H
+	)
+
+	g := Graph{
+		A: {B, H},
+		B: {C, G},
+		C: {D, E},
+		D: {F},
+		E: {F},
+		F: {B},
+		G: {H},
+		H: {},
+	}
+
+	_, _, controlDeps := g.ControlDependencies(len(g) - 1)
+
+	expectControlDeps := [][]int{
+		A: {B, G},
+		B: {B, C, F},
+		C: {D, E},
+		D: {},
+		E: {},
+		F: {},
+		G: {},
+		H: {},
+	}
 
 	for i := range expectControlDeps {
 		if len(controlDeps[i]) != len(expectControlDeps[i]) {

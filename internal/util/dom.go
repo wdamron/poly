@@ -38,6 +38,14 @@ func (g Graph) Transpose() Graph {
 	return t
 }
 
+func (g Graph) TransposeInto(target Graph) {
+	for pred, succs := range g {
+		for _, succ := range succs {
+			target[succ] = append(target[succ], pred)
+		}
+	}
+}
+
 func (g Graph) Compact() {
 	for id, dupes := range g {
 		switch len(dupes) {
@@ -134,7 +142,6 @@ func (g Graph) TransposedImmediateDominators(transposed Graph, entry int) []int 
 		}
 		infos[id].post = order
 	}
-	// The 0th node is assumed to be the entry node:
 	idoms[entry] = entry
 	changed := true
 	for changed {
@@ -258,11 +265,7 @@ func (g Graph) ControlDependencies(exit int) (ipostdoms []int, frontiers [][]int
 	for i := range deps {
 		deps[i] = nil
 	}
-	for y := range g {
-		for x := range frontiers[y] {
-			deps[x] = append(deps[x], y)
-		}
-	}
+	Graph(frontiers).TransposeInto(Graph(deps))
 	return
 }
 
