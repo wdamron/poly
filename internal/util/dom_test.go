@@ -283,3 +283,57 @@ func TestDominanceMisc(t *testing.T) {
 		}
 	}
 }
+
+func TestControlDependencies(t *testing.T) {
+	// An Efficient Method of Computing Static Single Assignment Form (Cytron et al): https://c9x.me/compile/bib/ssa.pdf
+	// Section 5: Construction of Control Dependencies
+
+	// Figure 1:
+	g := Graph{
+		0:  {1, 13},
+		1:  {2},
+		2:  {3, 7},
+		3:  {4, 5},
+		4:  {6},
+		5:  {6},
+		6:  {8},
+		7:  {8},
+		8:  {9},
+		9:  {10, 11},
+		10: {11},
+		11: {9, 12},
+		12: {2, 13},
+		13: {},
+	}
+
+	// Figure 7:
+	expectControlDeps := [][]int{
+		0:  {1, 2, 8, 9, 11, 12},
+		2:  {3, 6, 7},
+		3:  {4, 5},
+		9:  {10},
+		11: {9, 11},
+		12: {2, 8, 9, 11},
+		13: nil,
+	}
+
+	_, _, controlDeps := g.ControlDependencies(13)
+
+	for i := range expectControlDeps {
+		if len(controlDeps[i]) != len(expectControlDeps[i]) {
+			t.Logf("ctrl: %#+v", controlDeps)
+			t.Logf("exp:  %#+v", expectControlDeps)
+			t.Fail()
+			break
+		}
+		// frontiers are sorted:
+		for j := range expectControlDeps[i] {
+			if controlDeps[i][j] != expectControlDeps[i][j] {
+				t.Logf("ctrl: %#+v", controlDeps)
+				t.Logf("exp:  %#+v", expectControlDeps)
+				t.Fail()
+				break
+			}
+		}
+	}
+}
