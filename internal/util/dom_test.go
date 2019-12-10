@@ -21,11 +21,71 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-package util
+package util_test
 
 import (
 	"testing"
+
+	. "github.com/wdamron/poly/internal/util"
 )
+
+func checkDoms(t *testing.T, expected, actual []int) {
+	for i := range expected {
+		if expected[i] != actual[i] {
+			t.Fatalf("unexpected dominators: %#+v", actual)
+		}
+	}
+}
+
+func checkGraphs(t *testing.T, expected, actual [][]int) {
+	for i := range expected {
+		if len(actual[i]) != len(expected[i]) {
+			t.Logf("expect:  %#+v", expected)
+			t.Logf("actual: %#+v", actual)
+			t.Fail()
+			break
+		}
+		for j := range expected[i] {
+			if actual[i][j] != expected[i][j] {
+				t.Logf("expect:  %#+v", expected)
+				t.Logf("actual: %#+v", actual)
+				t.Fail()
+				break
+			}
+		}
+	}
+}
+
+func checkTree(t *testing.T, tree DomTree, expectDoms []int) {
+	for dominee, idom := range expectDoms {
+		if tree.Idom(dominee) != expectDoms[dominee] {
+			t.Logf("tree: %#+v", tree)
+			t.Fail()
+			break
+		}
+		if !tree.Dominates(idom, dominee) {
+			t.Logf("bad dominates method")
+			t.Fail()
+			break
+		}
+
+		found := false
+		tree.Dominees(idom, func(id int) {
+			if id == dominee {
+				found = true
+			}
+			if !tree.Dominates(idom, id) {
+				t.Logf("bad dominates method")
+				t.Fail()
+			}
+		})
+		if !found {
+			t.Logf("bad dominates method")
+			t.Fail()
+			break
+		}
+	}
+}
 
 func TestDominators(t *testing.T) {
 	const (
@@ -69,11 +129,7 @@ func TestDominators(t *testing.T) {
 		ret:       entry,
 	}
 
-	for i := range doms {
-		if doms[i] != expect[i] {
-			t.Fatalf("unexpected dominators: %#+v", doms)
-		}
-	}
+	checkDoms(t, expect, doms)
 }
 
 func TestDominanceFrontiers(t *testing.T) {
@@ -96,41 +152,20 @@ func TestDominanceFrontiers(t *testing.T) {
 		F: {},
 	}
 
+	expectDoms := []int{A: A, B: A, C: B, D: B, E: B, F: A}
+	expectFrontiers := [][]int{
+		A: {},
+		B: {F},
+		C: {E},
+		D: {E},
+		E: {F},
+		F: {},
+	}
+
 	doms, frontiers := g.DominanceFrontiers(0)
 
-	expect := []int{
-		A: A,
-		B: A,
-		C: B,
-		D: B,
-		E: B,
-		F: A,
-	}
-
-	for i := range doms {
-		if doms[i] != expect[i] {
-			t.Fatalf("unexpected dominators: %#+v", doms)
-		}
-	}
-
-	if len(frontiers[A]) != 0 {
-		t.Fatalf("frontier: %#+v", frontiers[A])
-	}
-	if len(frontiers[B]) != 1 || frontiers[B][0] != F {
-		t.Fatalf("frontier: %#+v", frontiers[B])
-	}
-	if len(frontiers[C]) != 1 || frontiers[C][0] != E {
-		t.Fatalf("frontier: %#+v", frontiers[C])
-	}
-	if len(frontiers[D]) != 1 || frontiers[D][0] != E {
-		t.Fatalf("frontier: %#+v", frontiers[D])
-	}
-	if len(frontiers[E]) != 1 || frontiers[E][0] != F {
-		t.Fatalf("frontier: %#+v", frontiers[E])
-	}
-	if len(frontiers[F]) != 0 {
-		t.Fatalf("frontier: %#+v", frontiers[F])
-	}
+	checkDoms(t, expectDoms, doms)
+	checkGraphs(t, expectFrontiers, frontiers)
 }
 
 func TestDominanceMisc(t *testing.T) {
@@ -182,65 +217,9 @@ func TestDominanceMisc(t *testing.T) {
 	frontiers, tree := g.AnalyzeDominators(0)
 	_, _, controlDeps := g.ControlDependencies(8)
 
-	for dominee, idom := range expectDoms {
-		if tree.Idom(dominee) != expectDoms[dominee] {
-			t.Logf("tree: %#+v", tree)
-			t.Fail()
-			break
-		}
-		if !tree.Dominates(idom, dominee) {
-			t.Fatalf("bad dominates method")
-		}
-
-		found := false
-		tree.Dominees(idom, func(id int) {
-			if id == dominee {
-				found = true
-			}
-			if !tree.Dominates(idom, id) {
-				t.Fatalf("bad dominates method")
-			}
-		})
-		if !found {
-			t.Fatalf("bad dominees method")
-		}
-	}
-
-	for i := range expectFrontiers {
-		if len(frontiers[i]) != len(expectFrontiers[i]) {
-			t.Logf("frontiers: %#+v", frontiers)
-			t.Logf("exp:       %#+v", expectFrontiers)
-			t.Fail()
-			break
-		}
-		// frontiers are sorted:
-		for j := range expectFrontiers[i] {
-			if frontiers[i][j] != expectFrontiers[i][j] {
-				t.Logf("frontiers: %#+v", frontiers)
-				t.Logf("exp:       %#+v", expectFrontiers)
-				t.Fail()
-				break
-			}
-		}
-	}
-
-	for i := range expectControlDeps {
-		if len(controlDeps[i]) != len(expectControlDeps[i]) {
-			t.Logf("ctrl: %#+v", controlDeps)
-			t.Logf("exp:  %#+v", expectControlDeps)
-			t.Fail()
-			break
-		}
-		// frontiers are sorted:
-		for j := range expectControlDeps[i] {
-			if controlDeps[i][j] != expectControlDeps[i][j] {
-				t.Logf("ctrl: %#+v", controlDeps)
-				t.Logf("exp:  %#+v", expectControlDeps)
-				t.Fail()
-				break
-			}
-		}
-	}
+	checkTree(t, tree, expectDoms)
+	checkGraphs(t, expectFrontiers, frontiers)
+	checkGraphs(t, expectControlDeps, controlDeps)
 
 	g = Graph{
 		0:  {1, 2, 3},
@@ -262,33 +241,7 @@ func TestDominanceMisc(t *testing.T) {
 
 	tree = g.DominatorTree(0)
 
-	for id := range expectDoms {
-		if tree.Idom(id) != expectDoms[id] {
-			t.Logf("tree: %#+v", tree)
-			t.Fail()
-			break
-		}
-	}
-
-	for dominee, idom := range expectDoms {
-
-		if !tree.Dominates(idom, dominee) {
-			t.Fatalf("bad dominates method")
-		}
-
-		found := false
-		tree.Dominees(idom, func(id int) {
-			if id == dominee {
-				found = true
-			}
-			if !tree.Dominates(idom, id) {
-				t.Fatalf("bad dominates method")
-			}
-		})
-		if !found {
-			t.Fatalf("bad dominees method")
-		}
-	}
+	checkTree(t, tree, expectDoms)
 }
 
 func TestControlDependencies(t *testing.T) {
@@ -324,28 +277,43 @@ func TestControlDependencies(t *testing.T) {
 		13: nil,
 	}
 
-	ipostdoms, frontiers, controlDeps := g.ControlDependencies(13)
+	_, _, controlDeps := g.ControlDependencies(13)
 
-	t.Logf("ipostdoms: %#+v", ipostdoms)
-	t.Logf("frontiers: %#+v", frontiers)
+	checkGraphs(t, expectControlDeps, controlDeps)
 
-	for i := range expectControlDeps {
-		if len(controlDeps[i]) != len(expectControlDeps[i]) {
-			t.Logf("ctrl: %#+v", controlDeps)
-			t.Logf("exp:  %#+v", expectControlDeps)
-			t.Fail()
-			break
-		}
-		// frontiers are sorted:
-		for j := range expectControlDeps[i] {
-			if controlDeps[i][j] != expectControlDeps[i][j] {
-				t.Logf("ctrl: %#+v", controlDeps)
-				t.Logf("exp:  %#+v", expectControlDeps)
-				t.Fail()
-				break
-			}
-		}
+	// http://pages.cs.wisc.edu/~fischer/cs701.f05/lectures/Lecture22.pdf
+	const (
+		A = iota
+		B
+		C
+		D
+		E
+		F
+		G
+		H
+	)
+
+	g = Graph{
+		A: {B, H},
+		B: {C, G},
+		C: {D, E},
+		D: {F},
+		E: {F},
+		F: {B},
+		G: {H},
+		H: {},
 	}
+
+	_, _, controlDeps = g.ControlDependencies(H)
+
+	expectControlDeps = [][]int{
+		A: {B, G},
+		B: {B, C, F},
+		C: {D, E},
+		D: {}, E: {}, F: {}, G: {}, H: {},
+	}
+
+	checkGraphs(t, expectControlDeps, controlDeps)
 }
 
 func TestPostdominators(t *testing.T) {
@@ -388,83 +356,6 @@ func TestPostdominators(t *testing.T) {
 		F: {},
 	}
 
-	for i := range ipostdoms {
-		if ipostdoms[i] != expectPostdoms[i] {
-			t.Fatalf("unexpected dominators: %#+v", ipostdoms)
-		}
-	}
-
-	for i := range expectFrontiers {
-		if len(frontiers[i]) != len(expectFrontiers[i]) {
-			t.Logf("frontier: %#+v", frontiers)
-			t.Logf("exp:      %#+v", expectFrontiers)
-			t.Fail()
-			break
-		}
-		// frontiers are sorted:
-		for j := range expectFrontiers[i] {
-			if frontiers[i][j] != expectFrontiers[i][j] {
-				t.Logf("frontier: %#+v", frontiers)
-				t.Logf("exp:      %#+v", expectFrontiers)
-				t.Fail()
-				break
-			}
-		}
-	}
-}
-
-func TestControlDependencies2(t *testing.T) {
-	// http://pages.cs.wisc.edu/~fischer/cs701.f05/lectures/Lecture22.pdf
-	const (
-		A = iota
-		B
-		C
-		D
-		E
-		F
-		G
-		H
-	)
-
-	g := Graph{
-		A: {B, H},
-		B: {C, G},
-		C: {D, E},
-		D: {F},
-		E: {F},
-		F: {B},
-		G: {H},
-		H: {},
-	}
-
-	_, _, controlDeps := g.ControlDependencies(len(g) - 1)
-
-	expectControlDeps := [][]int{
-		A: {B, G},
-		B: {B, C, F},
-		C: {D, E},
-		D: {},
-		E: {},
-		F: {},
-		G: {},
-		H: {},
-	}
-
-	for i := range expectControlDeps {
-		if len(controlDeps[i]) != len(expectControlDeps[i]) {
-			t.Logf("ctrl: %#+v", controlDeps)
-			t.Logf("exp:  %#+v", expectControlDeps)
-			t.Fail()
-			break
-		}
-		// frontiers are sorted:
-		for j := range expectControlDeps[i] {
-			if controlDeps[i][j] != expectControlDeps[i][j] {
-				t.Logf("ctrl: %#+v", controlDeps)
-				t.Logf("exp:  %#+v", expectControlDeps)
-				t.Fail()
-				break
-			}
-		}
-	}
+	checkDoms(t, expectPostdoms, ipostdoms)
+	checkGraphs(t, expectFrontiers, frontiers)
 }
