@@ -293,7 +293,7 @@ type DomTree struct {
 }
 
 type domInfo struct {
-	id, idom, pre, post int
+	id, idom, pre, post, level int
 }
 
 func (g Graph) DominatorTree(entry int) DomTree {
@@ -345,22 +345,22 @@ func (t DomTree) Dominates(a, b int) bool {
 	return ad.pre <= bd.pre && bd.post <= ad.post
 }
 
-func (t *DomTree) numberLarge(id, pre, post int, seen []bool) (int, int, []bool) {
+func (t *DomTree) numberLarge(id, pre, post, level int, seen []bool) (int, int, []bool) {
 	if seen[id] {
 		return pre, post, seen
 	}
 	seen[id] = true
-	t.verts[id].pre = pre
+	t.verts[id].pre, t.verts[id].level = pre, level
 	pre++
 	for _, child := range t.edges[id] {
-		pre, post, seen = t.numberLarge(child, pre, post, seen)
+		pre, post, seen = t.numberLarge(child, pre, post, level+1, seen)
 	}
 	t.verts[id].post = post
 	post++
 	return pre, post, seen
 }
 
-func (t *DomTree) numberSmall(id, pre, post int, seen uint64) (int, int, uint64) {
+func (t *DomTree) numberSmall(id, pre, post, level int, seen uint64) (int, int, uint64) {
 	if seen&(1<<uint8(id)) != 0 {
 		return pre, post, seen
 	}
@@ -368,7 +368,7 @@ func (t *DomTree) numberSmall(id, pre, post int, seen uint64) (int, int, uint64)
 	t.verts[id].pre = pre
 	pre++
 	for _, child := range t.edges[id] {
-		pre, post, seen = t.numberSmall(child, pre, post, seen)
+		pre, post, seen = t.numberSmall(child, pre, post, level+1, seen)
 	}
 	t.verts[id].post = post
 	post++

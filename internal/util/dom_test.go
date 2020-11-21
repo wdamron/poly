@@ -153,14 +153,7 @@ func TestDominanceFrontiers(t *testing.T) {
 	}
 
 	expectDoms := []int{A: A, B: A, C: B, D: B, E: B, F: A}
-	expectFrontiers := [][]int{
-		A: {},
-		B: {F},
-		C: {E},
-		D: {E},
-		E: {F},
-		F: {},
-	}
+	expectFrontiers := [][]int{A: {}, B: {F}, C: {E}, D: {E}, E: {F}, F: {}}
 
 	doms, frontiers := g.DominanceFrontiers(0)
 
@@ -338,23 +331,8 @@ func TestPostdominators(t *testing.T) {
 
 	ipostdoms, frontiers, _ := g.ControlDependencies(5)
 
-	expectPostdoms := []int{
-		A: F,
-		B: E,
-		C: E,
-		D: E,
-		E: F,
-		F: F,
-	}
-
-	expectFrontiers := [][]int{
-		A: {},
-		B: {A},
-		C: {B},
-		D: {B},
-		E: {A},
-		F: {},
-	}
+	expectPostdoms := []int{A: F, B: E, C: E, D: E, E: F, F: F}
+	expectFrontiers := [][]int{A: {}, B: {A}, C: {B}, D: {B}, E: {A}, F: {}}
 
 	checkDoms(t, expectPostdoms, ipostdoms)
 	checkGraphs(t, expectFrontiers, frontiers)
